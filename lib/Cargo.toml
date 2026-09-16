@@ -1,0 +1,20 @@
+[package]
+name = "xenonypt"      # Layihənin adı (istədiyini yaza bilərsən)
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"] # Flutter ilə inteqrasiya üçün vacibdir
+
+[dependencies]
+flutter_rust_bridge = "=2.12.0"
+
+# AES-GCM şifrələməsi və Stream dəstəyi üçün
+aes-gcm = { version = "0.10", features = ["stream"] }
+# Təhlükəsiz təsadüfi nonce (açar) generasiyası üçün
+rand = "0.8"
+argon2 = "0.5"
+serde = {version = "1", features = ["derive"]}
+serde_json = "1"
+hex = "0.4"
+zeroize = {version = "1.7", features = ["derive"]}
