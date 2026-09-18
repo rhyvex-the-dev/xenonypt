@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as dart_math;
 
+import 'package:android_intent_plus/android_intent.dart';
 import 'package:biometric_storage/biometric_storage.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_displaymode/flutter_displaymode.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'src/rust/api.dart';
@@ -182,6 +184,34 @@ class _WelcomeScreenState extends State<WelcomeScreen>
     _glowAnim = Tween<double>(begin: 0.3, end: 1.0).animate(
       CurvedAnimation(parent: _glowCtrl, curve: Curves.easeInOut),
     );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkFirstLaunchStoragePermission();
+    });
+  }
+
+  Future<void> _checkFirstLaunchStoragePermission() async {
+    if (!Platform.isAndroid) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final hasSeenDialog =
+        prefs.getBool('has_seen_manage_storage_dialog') ?? false;
+
+    if (hasSeenDialog) return;
+
+    final status = await Permission.manageExternalStorage.status;
+    if (status.isGranted) return;
+
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return const ManageStoragePermissionDialog();
+      },
+    );
+
+    await prefs.setBool('has_seen_manage_storage_dialog', true);
   }
 
   @override
@@ -986,6 +1016,7 @@ class _VaultContentScreenState extends State<VaultContentScreen>
   List<VaultFileEntry> _files = [];
   bool _loading = true;
   String? _error;
+  bool _isPickingFile = false;
 
   @override
   void initState() {
@@ -1007,6 +1038,8 @@ class _VaultContentScreenState extends State<VaultContentScreen>
   // is deliberately excluded so we don't re-lock on every tiny interrupt.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_isPickingFile) return;
+
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       vaultLock(handle: widget.vaultHandle);
@@ -1150,6 +1183,7 @@ class _VaultContentScreenState extends State<VaultContentScreen>
   }
 
   Future<void> _addFile() async {
+    _isPickingFile = true;
     try {
       final result = await FilePicker.pickFiles(
           allowMultiple: false);
@@ -1173,6 +1207,8 @@ class _VaultContentScreenState extends State<VaultContentScreen>
         );
         setState(() => _loading = false);
       }
+    } finally {
+      _isPickingFile = false;
     }
   }
 
@@ -1797,4 +1833,146 @@ PageRouteBuilder<T> _slideRoute<T>(Widget page) {
     },
     transitionDuration: const Duration(milliseconds: 320),
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MANAGE EXTERNAL STORAGE PERMISSION DIALOG
+// ─────────────────────────────────────────────────────────────────────────────
+
+class ManageStoragePermissionDialog extends StatelessWidget {
+  const ManageStoragePermissionDialog({super.key});
+
+  Future<void> _openStorageSettings(BuildContext context) async {
+    final nav = Navigator.of(context);
+    try {
+      final status = await Permission.manageExternalStorage.request();
+      if (!status.isGranted && Platform.isAndroid) {
+        try {
+          const intent = AndroidIntent(
+            action: 'android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION',
+            data: 'package:com.example.xenonypt',
+          );
+          await intent.launch();
+        } catch (_) {
+          await openAppSettings();
+        }
+      }
+    } catch (_) {
+      if (Platform.isAndroid) {
+        try {
+          const intent = AndroidIntent(
+            action: 'android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION',
+            data: 'package:com.example.xenonypt',
+          );
+          await intent.launch();
+        } catch (_) {
+          await openAppSettings();
+        }
+      } else {
+        await openAppSettings();
+      }
+    }
+    if (nav.mounted) {
+      nav.pop();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFF0F1722),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: const BorderSide(color: Color(0xFF2A3A4A), width: 1.5),
+      ),
+      title: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1CB7FF).withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(
+              Icons.folder_special_rounded,
+              color: Color(0xFF1CB7FF),
+              size: 28,
+            ),
+          ),
+          const SizedBox(width: 14),
+          const Expanded(
+            child: Text(
+              'Full Storage Access',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                fontFamily: 'monospace',
+              ),
+            ),
+          ),
+        ],
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: const [
+            Text(
+              'Xenonypt requires All Files Access (MANAGE_EXTERNAL_STORAGE) to securely create, discover, and manage encrypted vaults across your device storage.',
+              style: TextStyle(
+                color: Color(0xFF94A3B8),
+                fontSize: 14,
+                height: 1.5,
+                fontFamily: 'monospace',
+              ),
+            ),
+            SizedBox(height: 14),
+            Text(
+              'Please grant full storage access in the system settings page to proceed seamlessly.',
+              style: TextStyle(
+                color: Color(0xFF64748B),
+                fontSize: 13,
+                height: 1.4,
+                fontFamily: 'monospace',
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text(
+            'Later',
+            style: TextStyle(
+              color: Color(0xFF64748B),
+              fontWeight: FontWeight.w600,
+              fontFamily: 'monospace',
+            ),
+          ),
+        ),
+        ElevatedButton.icon(
+          onPressed: () => _openStorageSettings(context),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF1CB7FF),
+            foregroundColor: const Color(0xFF080B0F),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+          icon: const Icon(Icons.settings_suggest_rounded, size: 18),
+          label: const Text(
+            'Grant Access',
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 14,
+              fontFamily: 'monospace',
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }

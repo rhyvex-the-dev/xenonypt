@@ -27,18 +27,18 @@ pub fn vault_exists(vault_dir: String) -> bool {
 }
 
 /// Kassanı kilidləyir (açarı yaddaşdan silir).
-pub fn vault_lock(handle: VaultHandle) {
+pub fn vault_lock(handle: &VaultHandle) {
     handle.lock();
 }
 
 /// Kassanın kilidli olub olmadığını yoxlayır.
-pub fn vault_is_unlocked(handle: VaultHandle) -> bool {
+pub fn vault_is_unlocked(handle: &VaultHandle) -> bool {
     handle.is_unlocked()
 }
 
 /// Kassaya fayl əlavə edir.
 pub fn vault_add_file(
-    handle: VaultHandle,
+    handle: &VaultHandle,
     source_file_path: String,
     original_name: String,
 ) -> Result<String, String> {
@@ -46,25 +46,25 @@ pub fn vault_add_file(
 }
 
 /// Kassadan faylı silir.
-pub fn vault_delete_file(handle: VaultHandle, obfuscated_name: String) -> Result<(), String> {
+pub fn vault_delete_file(handle: &VaultHandle, obfuscated_name: String) -> Result<(), String> {
     handle.delete_file(obfuscated_name)
 }
 
 /// Kassadakı bütün faylların siyahısını qaytarır.
-pub fn vault_list_files(handle: VaultHandle) -> Result<Vec<VaultFileEntry>, String> {
+pub fn vault_list_files(handle: &VaultHandle) -> Result<Vec<VaultFileEntry>, String> {
     handle.list_files()
 }
 
 /// Kassa qovluğunda olan amma hələ şifrələnməmiş (kassaya əlavə edilməmiş)
 /// faylların adlarını qaytarır. Dart tərəfi bunları istifadəçiyə göstərib
 /// kassaya qatmağı təklif edə bilər.
-pub fn vault_list_loose_files(handle: VaultHandle) -> Result<Vec<String>, String> {
+pub fn vault_list_loose_files(handle: &VaultHandle) -> Result<Vec<String>, String> {
     handle.list_loose_files()
 }
 
 /// Şifrəli faylı göstərilən yola çıxarır.
 pub fn vault_extract_file_to_path(
-    handle: VaultHandle,
+    handle: &VaultHandle,
     obfuscated_name: String,
     dest_path: String,
 ) -> Result<(), String> {
@@ -73,7 +73,7 @@ pub fn vault_extract_file_to_path(
 
 /// Kiçik faylları bytes kimi qaytarır.
 pub fn vault_extract_file_to_bytes(
-    handle: VaultHandle,
+    handle: &VaultHandle,
     obfuscated_name: String,
 ) -> Result<Vec<u8>, String> {
     handle.extract_file_to_bytes(obfuscated_name)

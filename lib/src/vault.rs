@@ -528,6 +528,7 @@ impl Drop for VaultInner {
 
 /// FRB tərəfindən Dart-da opaque klas kimi generasiya olunacaq handle.
 /// Açar bytes-ları heç vaxt bu strukturdan kənara (Dart-a) çıxmır.
+#[derive(Clone)]
 pub struct VaultHandle {
     inner: Arc<Mutex<VaultInner>>,
 }

@@ -69,14 +69,18 @@ fn wire__crate__api__vault_add_file_impl(
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_handle = <VaultHandle>::sse_decode(&mut deserializer);
+            let raw_handle = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<VaultHandle>,
+            >>::sse_decode(&mut deserializer);
+            let api_handle = flutter_rust_bridge::for_generated::rust_auto_opaque_explicit_decode(raw_handle);
             let api_source_file_path = <String>::sse_decode(&mut deserializer);
             let api_original_name = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, String>((move || {
+                    let handle = api_handle.try_read().map_err(|e| e.to_string())?.clone();
                     let output_ok = crate::api::vault_add_file(
-                        api_handle,
+                        &handle,
                         api_source_file_path,
                         api_original_name,
                     )?;
@@ -142,12 +146,16 @@ fn wire__crate__api__vault_delete_file_impl(
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_handle = <VaultHandle>::sse_decode(&mut deserializer);
+            let raw_handle = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<VaultHandle>,
+            >>::sse_decode(&mut deserializer);
+            let api_handle = flutter_rust_bridge::for_generated::rust_auto_opaque_explicit_decode(raw_handle);
             let api_obfuscated_name = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, String>((move || {
-                    let output_ok = crate::api::vault_delete_file(api_handle, api_obfuscated_name)?;
+                    let handle = api_handle.try_read().map_err(|e| e.to_string())?.clone();
+                    let output_ok = crate::api::vault_delete_file(&handle, api_obfuscated_name)?;
                     Ok(output_ok)
                 })())
             }
@@ -209,13 +217,17 @@ fn wire__crate__api__vault_extract_file_to_bytes_impl(
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_handle = <VaultHandle>::sse_decode(&mut deserializer);
+            let raw_handle = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<VaultHandle>,
+            >>::sse_decode(&mut deserializer);
+            let api_handle = flutter_rust_bridge::for_generated::rust_auto_opaque_explicit_decode(raw_handle);
             let api_obfuscated_name = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, String>((move || {
+                    let handle = api_handle.try_read().map_err(|e| e.to_string())?.clone();
                     let output_ok =
-                        crate::api::vault_extract_file_to_bytes(api_handle, api_obfuscated_name)?;
+                        crate::api::vault_extract_file_to_bytes(&handle, api_obfuscated_name)?;
                     Ok(output_ok)
                 })())
             }
@@ -244,14 +256,18 @@ fn wire__crate__api__vault_extract_file_to_path_impl(
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_handle = <VaultHandle>::sse_decode(&mut deserializer);
+            let raw_handle = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<VaultHandle>,
+            >>::sse_decode(&mut deserializer);
+            let api_handle = flutter_rust_bridge::for_generated::rust_auto_opaque_explicit_decode(raw_handle);
             let api_obfuscated_name = <String>::sse_decode(&mut deserializer);
             let api_dest_path = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, String>((move || {
+                    let handle = api_handle.try_read().map_err(|e| e.to_string())?.clone();
                     let output_ok = crate::api::vault_extract_file_to_path(
-                        api_handle,
+                        &handle,
                         api_obfuscated_name,
                         api_dest_path,
                     )?;
@@ -283,11 +299,18 @@ fn wire__crate__api__vault_is_unlocked_impl(
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_handle = <VaultHandle>::sse_decode(&mut deserializer);
+            let raw_handle = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<VaultHandle>,
+            >>::sse_decode(&mut deserializer);
+            let api_handle = flutter_rust_bridge::for_generated::rust_auto_opaque_explicit_decode(raw_handle);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, ()>((move || {
-                    let output_ok = Result::<_, ()>::Ok(crate::api::vault_is_unlocked(api_handle))?;
+                    let handle = match api_handle.try_read() {
+                        Ok(g) => g.clone(),
+                        Err(_) => return Ok(false),
+                    };
+                    let output_ok = Result::<_, ()>::Ok(crate::api::vault_is_unlocked(&handle))?;
                     Ok(output_ok)
                 })())
             }
@@ -316,11 +339,15 @@ fn wire__crate__api__vault_list_files_impl(
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_handle = <VaultHandle>::sse_decode(&mut deserializer);
+            let raw_handle = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<VaultHandle>,
+            >>::sse_decode(&mut deserializer);
+            let api_handle = flutter_rust_bridge::for_generated::rust_auto_opaque_explicit_decode(raw_handle);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, String>((move || {
-                    let output_ok = crate::api::vault_list_files(api_handle)?;
+                    let handle = api_handle.try_read().map_err(|e| e.to_string())?.clone();
+                    let output_ok = crate::api::vault_list_files(&handle)?;
                     Ok(output_ok)
                 })())
             }
@@ -349,11 +376,15 @@ fn wire__crate__api__vault_list_loose_files_impl(
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_handle = <VaultHandle>::sse_decode(&mut deserializer);
+            let raw_handle = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<VaultHandle>,
+            >>::sse_decode(&mut deserializer);
+            let api_handle = flutter_rust_bridge::for_generated::rust_auto_opaque_explicit_decode(raw_handle);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, String>((move || {
-                    let output_ok = crate::api::vault_list_loose_files(api_handle)?;
+                    let handle = api_handle.try_read().map_err(|e| e.to_string())?.clone();
+                    let output_ok = crate::api::vault_list_loose_files(&handle)?;
                     Ok(output_ok)
                 })())
             }
@@ -382,12 +413,19 @@ fn wire__crate__api__vault_lock_impl(
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_handle = <VaultHandle>::sse_decode(&mut deserializer);
+            let raw_handle = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<VaultHandle>,
+            >>::sse_decode(&mut deserializer);
+            let api_handle = flutter_rust_bridge::for_generated::rust_auto_opaque_explicit_decode(raw_handle);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, ()>((move || {
+                    let handle = match api_handle.try_read() {
+                        Ok(g) => g.clone(),
+                        Err(_) => return Ok(()),
+                    };
                     let output_ok = Result::<_, ()>::Ok({
-                        crate::api::vault_lock(api_handle);
+                        crate::api::vault_lock(&handle);
                     })?;
                     Ok(output_ok)
                 })())
