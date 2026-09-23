@@ -42,13 +42,21 @@ void main() async {
 // what it is. This mirrors the 16-random-byte hex scheme vault.rs uses for
 // obfuscated_name, just generated on the Dart side before the folder exists.+++
 
+String _normalizeVaultDirPath(String path) {
+  var p = path;
+  while (p.length > 1 && (p.endsWith('/') || p.endsWith(r'\'))) {
+    p = p.substring(0, p.length - 1);
+  }
+  return p;
+}
 
-String _bioEnabledKey(String path) => 'bio_enabled:$path';
+String _bioEnabledKey(String path) =>
+    'bio_enabled:${_normalizeVaultDirPath(path)}';
 
 // biometric_storage file names are used as on-disk identifiers by the
 // plugin, so keep them filesystem-safe and stable across app restarts.
 String _bioStorageName(String path) =>
-    'bio_pw_${path.replaceAll(RegExp(r'[^A-Za-z0-9]'), '_')}';
+    'bio_pw_${_normalizeVaultDirPath(path).replaceAll(RegExp(r'[^A-Za-z0-9]'), '_')}';
 
 // Every read/write of the biometric-protected secret must pass through
 // a fresh OS-level biometric check (no caching window). The resulting
@@ -667,7 +675,7 @@ class CreateVaultScreen extends StatefulWidget {
   State<CreateVaultScreen> createState() =>
       _CreateVaultScreenState();
 }
-
+bool _enableBiometric = false;
 class _CreateVaultScreenState extends State<CreateVaultScreen> {
   final _formKey = GlobalKey<FormState>();
 
@@ -678,7 +686,6 @@ class _CreateVaultScreenState extends State<CreateVaultScreen> {
   bool _obscurePw = true;
   bool _obscureConfirm = true;
   bool _isBiometricSupported = false;
-  bool _enableBiometric = false;
   bool _isCreating = false;
   int _strength = 0; // 0–4
 
@@ -1296,9 +1303,9 @@ class _VaultContentScreenState extends State<VaultContentScreen>
         backgroundColor: const Color(0xFF080B0F),
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded,
+          icon: const Icon(Icons.arrow_forward_ios_rounded,
               size: 18),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () => Navigator.push(context, _slideRoute(SettingsScreen(directoryPath: widget.directoryPath))),
         ),
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1337,7 +1344,7 @@ class _VaultContentScreenState extends State<VaultContentScreen>
         onSettings: () {
           Navigator.pop(context);
           Navigator.push(
-              context, _slideRoute(const SettingsScreen()));
+              context, _slideRoute(SettingsScreen(directoryPath: widget.directoryPath)));
         },
       ),
       body: _buildBody(),
@@ -1533,7 +1540,8 @@ class VaultNavigationDrawer extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  final String directoryPath;
+  const SettingsScreen({super.key, required this.directoryPath});
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -1541,6 +1549,159 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _trueDarkOled = true;
+  bool _enableBiometric = false;
+  bool _isBiometricSupported = false;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkBiometricSupport();
+    _loadBiometricPreference();
+  }
+
+  Future<void> _checkBiometricSupport() async {
+    try {
+      final response = await BiometricStorage().canAuthenticate();
+      if (mounted) {
+        setState(() => _isBiometricSupported =
+            response == CanAuthenticateResponse.success);
+      }
+    } catch (_) {
+      if (mounted) setState(() => _isBiometricSupported = false);
+    }
+  }
+
+  Future<void> _loadBiometricPreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    final enabled =
+        prefs.getBool(_bioEnabledKey(widget.directoryPath)) ?? false;
+    if (mounted) {
+      setState(() => _enableBiometric = enabled);
+    }
+  }
+
+  Future<void> _handleBiometricToggle(bool val) async {
+    if (val) {
+      // Biometrikanı aktivləşdirmək üçün şifrə tələb olunur
+      final password = await _showPasswordPromptDialog();
+      if (password == null || password.isEmpty) return;
+
+      setState(() => _isLoading = true);
+      try {
+        // Şifrənin düzgünlüyünü yoxlamaq üçün vault-u açmağa cəhd edirik
+        final handle = await vaultUnlock(
+            vaultDir: widget.directoryPath, password: password);
+        await vaultLock(handle: handle);
+
+        // Uğurludursa, biometrik saxlanca yazırıq
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool(_bioEnabledKey(widget.directoryPath), true);
+        
+        final storage = await _bioStorage(widget.directoryPath);
+        await storage.write(password);
+
+        if (mounted) {
+          setState(() => _enableBiometric = true);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Biometric login enabled successfully')),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Wrong password or biometric error: $e'),
+              backgroundColor: const Color(0xFFFF5252),
+            ),
+          );
+        }
+      } finally {
+        if (mounted) setState(() => _isLoading = false);
+      }
+    } else {
+      // Biometrikanı söndürürük
+      setState(() => _isLoading = true);
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool(_bioEnabledKey(widget.directoryPath), false);
+        
+        // Saxlanılan biometrik məlumatı təmizləyirik
+        final storage = await _bioStorage(widget.directoryPath);
+        await storage.delete();
+
+        if (mounted) {
+          setState(() => _enableBiometric = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Biometric login disabled')),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error disabling biometric: $e'),
+              backgroundColor: const Color(0xFFFF5252),
+            ),
+          );
+        }
+      } finally {
+        if (mounted) setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<String?> _showPasswordPromptDialog() async {
+    final passwordController = TextEditingController();
+    bool obscure = true;
+
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF0E1318),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('Confirm Password',
+              style: TextStyle(color: Color(0xFFCFE8FF))),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Enter your vault password to enable biometric login.',
+                style: TextStyle(color: Color(0xFF7A95B0), fontSize: 13),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: passwordController,
+                obscureText: obscure,
+                autofocus: true,
+                decoration: InputDecoration(
+                  labelText: 'Password',
+                  prefixIcon: const Icon(Icons.lock_rounded, color: Color(0xFF4FC3F7)),
+                  suffixIcon: IconButton(
+                    icon: Icon(obscure ? Icons.visibility_off : Icons.visibility,
+                        color: const Color(0xFF4FC3F7)),
+                    onPressed: () => setDialogState(() => obscure = !obscure),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, null),
+              child: const Text('CANCEL'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, passwordController.text),
+              child: const Text('CONFIRM'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1555,81 +1716,80 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 fontWeight: FontWeight.bold)),
         centerTitle: true,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded,
-              size: 18),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      body: ListView(
-        children: [
-          const _SettingsHeader(title: 'APPEARANCE'),
-          const ListTile(
-            leading: Icon(Icons.palette_rounded,
-                color: Color(0xFF4FC3F7)),
-            title: Text('Theme',
-                style: TextStyle(color: Color(0xFFCFE8FF))),
-            subtitle: Text('Dark (Xenonypt)',
-                style: TextStyle(
-                    color: Color(0xFF7A95B0), fontSize: 12)),
-          ),
-          SwitchListTile(
-            secondary: const Icon(Icons.brightness_1_rounded,
-                color: Color(0xFF4FC3F7)),
-            title: const Text('True dark / OLED',
-                style: TextStyle(color: Color(0xFFCFE8FF))),
-            subtitle: const Text('Pure black backgrounds',
-                style: TextStyle(
-                    color: Color(0xFF7A95B0), fontSize: 12)),
-            value: _trueDarkOled,
-            onChanged: (val) =>
-                setState(() => _trueDarkOled = val),
-          ),
-          const Divider(color: Color(0xFF1E2D3D)),
-          const _SettingsHeader(title: 'SECURITY'),
-          _buildTile(Icons.enhanced_encryption_rounded,
-              'Encryption', 'AES-256-GCM + Argon2id'),
-          _buildTile(Icons.fingerprint_rounded, 'Biometrics',
-              'Configured per vault'),
-          const Divider(color: Color(0xFF1E2D3D)),
-          const _SettingsHeader(title: 'ABOUT'),
-          _buildTile(Icons.language_rounded, 'Language', 'English'),
-          _buildTile(
-              Icons.code_rounded, 'Source code', 'Version: alpha'),
-          _buildTile(Icons.book_rounded,
-              'Third-party libraries', ''),
-          const SizedBox(height: 8),
-          ListTile(
-            leading: const Icon(Icons.workspace_premium_rounded,
-                color: Colors.amber),
-            title: const Text('Premium',
-                style: TextStyle(
-                    color: Colors.amber,
-                    fontWeight: FontWeight.bold)),
-            subtitle: const Text('Unlock advanced features',
-                style: TextStyle(
-                    color: Color(0xFF7A95B0), fontSize: 12)),
-            onTap: () {},
-          ),
-        ],
-      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator(color: Color(0xFF4FC3F7)))
+          : ListView(
+              children: [
+                const _SettingsHeader(title: 'APPEARANCE'),
+                const ListTile(
+                  leading: Icon(Icons.palette_rounded, color: Color(0xFF4FC3F7)),
+                  title: Text('Theme', style: TextStyle(color: Color(0xFFCFE8FF))),
+                  subtitle: Text('Dark (Xenonypt)',
+                      style: TextStyle(color: Color(0xFF7A95B0), fontSize: 12)),
+                ),
+                SwitchListTile(
+                  secondary: const Icon(Icons.brightness_1_rounded,
+                      color: Color(0xFF4FC3F7)),
+                  title: const Text('True dark / OLED',
+                      style: TextStyle(color: Color(0xFFCFE8FF))),
+                  subtitle: const Text('Pure black backgrounds',
+                      style: TextStyle(color: Color(0xFF7A95B0), fontSize: 12)),
+                  value: _trueDarkOled,
+                  onChanged: (val) => setState(() => _trueDarkOled = val),
+                ),
+                const Divider(color: Color(0xFF1E2D3D)),
+                const _SettingsHeader(title: 'SECURITY'),
+                _buildTile(Icons.enhanced_encryption_rounded,
+                    'Encryption', 'AES-256-GCM + Argon2id'),
+                if (_isBiometricSupported)
+                  SwitchListTile(
+                    secondary: const Icon(Icons.fingerprint_rounded,
+                        color: Color(0xFF4FC3F7)),
+                    title: const Text('Biometric login',
+                        style: TextStyle(color: Color(0xFFCFE8FF))),
+                    subtitle: const Text('Enable or disable for this vault',
+                        style: TextStyle(color: Color(0xFF7A95B0), fontSize: 12)),
+                    value: _enableBiometric,
+                    onChanged: _handleBiometricToggle,
+                  ),
+                const Divider(color: Color(0xFF1E2D3D)),
+                const _SettingsHeader(title: 'ABOUT'),
+                _buildTile(Icons.language_rounded, 'Language', 'English'),
+                _buildTile(Icons.code_rounded, 'Source code', 'Version: alpha'),
+                _buildTile(Icons.book_rounded, 'Third-party libraries', ''),
+                const SizedBox(height: 8),
+                ListTile(
+                  leading: const Icon(Icons.workspace_premium_rounded,
+                      color: Colors.amber),
+                  title: const Text('Premium',
+                      style: TextStyle(
+                          color: Colors.amber, fontWeight: FontWeight.bold)),
+                  subtitle: const Text('Unlock advanced features',
+                      style: TextStyle(color: Color(0xFF7A95B0), fontSize: 12)),
+                  onTap: () {},
+                ),
+              ],
+            ),
     );
   }
 
-  Widget _buildTile(
-      IconData icon, String title, String subtitle) {
+  Widget _buildTile(IconData icon, String title, String subtitle) {
     return ListTile(
       leading: Icon(icon, color: const Color(0xFF4FC3F7)),
-      title: Text(title,
-          style: const TextStyle(color: Color(0xFFCFE8FF))),
+      title: Text(title, style: const TextStyle(color: Color(0xFFCFE8FF))),
       subtitle: subtitle.isNotEmpty
           ? Text(subtitle,
-              style: const TextStyle(
-                  color: Color(0xFF7A95B0), fontSize: 12))
+              style: const TextStyle(color: Color(0xFF7A95B0), fontSize: 12))
           : null,
       onTap: () {},
     );
   }
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SHARED WIDGETS

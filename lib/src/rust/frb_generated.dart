@@ -69,7 +69,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 1516745918;
+  int get rustContentHash => 1845787973;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -112,8 +112,29 @@ abstract class RustLibApi extends BaseApi {
 
   Future<void> crateApiVaultLock({required VaultHandle handle});
 
+  Future<VaultFileStream> crateApiVaultOpenStream(
+      {required VaultHandle handle, required String obfuscatedName});
+
+  Future<BigInt> crateApiVaultStreamChunkSize(
+      {required VaultFileStream stream});
+
+  Future<Uint8List> crateApiVaultStreamReadChunk(
+      {required VaultFileStream stream, required BigInt chunkIndex});
+
+  Future<BigInt> crateApiVaultStreamTotalSize(
+      {required VaultFileStream stream});
+
   Future<VaultHandle> crateApiVaultUnlock(
       {required String vaultDir, required String password});
+
+  RustArcIncrementStrongCountFnType
+      get rust_arc_increment_strong_count_VaultFileStream;
+
+  RustArcDecrementStrongCountFnType
+      get rust_arc_decrement_strong_count_VaultFileStream;
+
+  CrossPlatformFinalizerArg
+      get rust_arc_decrement_strong_count_VaultFileStreamPtr;
 
   RustArcIncrementStrongCountFnType
       get rust_arc_increment_strong_count_VaultHandle;
@@ -140,7 +161,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
             handle, serializer);
         sse_encode_String(sourceFilePath, serializer);
         sse_encode_String(originalName, serializer);
@@ -195,7 +216,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
             handle, serializer);
         sse_encode_String(obfuscatedName, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
@@ -246,7 +267,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
             handle, serializer);
         sse_encode_String(obfuscatedName, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
@@ -276,7 +297,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
             handle, serializer);
         sse_encode_String(obfuscatedName, serializer);
         sse_encode_String(destPath, serializer);
@@ -304,7 +325,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
             handle, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
             funcId: 7, port: port_);
@@ -330,7 +351,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
             handle, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
             funcId: 8, port: port_);
@@ -356,7 +377,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
             handle, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
             funcId: 9, port: port_);
@@ -382,7 +403,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
             handle, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
             funcId: 10, port: port_);
@@ -403,6 +424,116 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<VaultFileStream> crateApiVaultOpenStream(
+      {required VaultHandle handle, required String obfuscatedName}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
+            handle, serializer);
+        sse_encode_String(obfuscatedName, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 11, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultFileStream,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiVaultOpenStreamConstMeta,
+      argValues: [handle, obfuscatedName],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiVaultOpenStreamConstMeta => const TaskConstMeta(
+        debugName: "vault_open_stream",
+        argNames: ["handle", "obfuscatedName"],
+      );
+
+  @override
+  Future<BigInt> crateApiVaultStreamChunkSize(
+      {required VaultFileStream stream}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultFileStream(
+            stream, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 12, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_u_64,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiVaultStreamChunkSizeConstMeta,
+      argValues: [stream],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiVaultStreamChunkSizeConstMeta =>
+      const TaskConstMeta(
+        debugName: "vault_stream_chunk_size",
+        argNames: ["stream"],
+      );
+
+  @override
+  Future<Uint8List> crateApiVaultStreamReadChunk(
+      {required VaultFileStream stream, required BigInt chunkIndex}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultFileStream(
+            stream, serializer);
+        sse_encode_u_64(chunkIndex, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 13, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_prim_u_8_strict,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiVaultStreamReadChunkConstMeta,
+      argValues: [stream, chunkIndex],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiVaultStreamReadChunkConstMeta =>
+      const TaskConstMeta(
+        debugName: "vault_stream_read_chunk",
+        argNames: ["stream", "chunkIndex"],
+      );
+
+  @override
+  Future<BigInt> crateApiVaultStreamTotalSize(
+      {required VaultFileStream stream}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultFileStream(
+            stream, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 14, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_u_64,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiVaultStreamTotalSizeConstMeta,
+      argValues: [stream],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiVaultStreamTotalSizeConstMeta =>
+      const TaskConstMeta(
+        debugName: "vault_stream_total_size",
+        argNames: ["stream"],
+      );
+
+  @override
   Future<VaultHandle> crateApiVaultUnlock(
       {required String vaultDir, required String password}) {
     return handler.executeNormal(NormalTask(
@@ -411,7 +542,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(vaultDir, serializer);
         sse_encode_String(password, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 11, port: port_);
+            funcId: 15, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData:
@@ -430,6 +561,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   RustArcIncrementStrongCountFnType
+      get rust_arc_increment_strong_count_VaultFileStream => wire
+          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultFileStream;
+
+  RustArcDecrementStrongCountFnType
+      get rust_arc_decrement_strong_count_VaultFileStream => wire
+          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultFileStream;
+
+  RustArcIncrementStrongCountFnType
       get rust_arc_increment_strong_count_VaultHandle => wire
           .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle;
 
@@ -438,11 +577,43 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle;
 
   @protected
+  VaultFileStream
+      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultFileStream(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return VaultFileStreamImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
   VaultHandle
       dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
           dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return VaultHandleImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  VaultFileStream
+      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultFileStream(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return VaultFileStreamImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  VaultHandle
+      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return VaultHandleImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  VaultFileStream
+      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultFileStream(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return VaultFileStreamImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -484,6 +655,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  BigInt dco_decode_u_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dcoDecodeU64(raw);
+  }
+
+  @protected
   int dco_decode_u_8(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as int;
@@ -514,11 +691,47 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  VaultFileStream
+      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultFileStream(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return VaultFileStreamImpl.frbInternalSseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
   VaultHandle
       sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
           SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return VaultHandleImpl.frbInternalSseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
+  VaultFileStream
+      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultFileStream(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return VaultFileStreamImpl.frbInternalSseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
+  VaultHandle
+      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return VaultHandleImpl.frbInternalSseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
+  VaultFileStream
+      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultFileStream(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return VaultFileStreamImpl.frbInternalSseDecode(
         sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
   }
 
@@ -577,6 +790,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  BigInt sse_decode_u_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getBigUint64();
+  }
+
+  @protected
   int sse_decode_u_8(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint8();
@@ -610,11 +829,51 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
+      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultFileStream(
+          VaultFileStream self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+        (self as VaultFileStreamImpl).frbInternalSseEncode(move: true),
+        serializer);
+  }
+
+  @protected
+  void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
           VaultHandle self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
         (self as VaultHandleImpl).frbInternalSseEncode(move: true), serializer);
+  }
+
+  @protected
+  void
+      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultFileStream(
+          VaultFileStream self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+        (self as VaultFileStreamImpl).frbInternalSseEncode(move: false),
+        serializer);
+  }
+
+  @protected
+  void
+      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
+          VaultHandle self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+        (self as VaultHandleImpl).frbInternalSseEncode(move: false),
+        serializer);
+  }
+
+  @protected
+  void
+      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultFileStream(
+          VaultFileStream self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+        (self as VaultFileStreamImpl).frbInternalSseEncode(move: null),
+        serializer);
   }
 
   @protected
@@ -666,6 +925,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_u_64(BigInt self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putBigUint64(self);
+  }
+
+  @protected
   void sse_encode_u_8(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint8(self);
@@ -695,6 +960,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putInt32(self);
   }
+}
+
+@sealed
+class VaultFileStreamImpl extends RustOpaque implements VaultFileStream {
+  // Not to be used by end users
+  VaultFileStreamImpl.frbInternalDcoDecode(List<dynamic> wire)
+      : super.frbInternalDcoDecode(wire, _kStaticData);
+
+  // Not to be used by end users
+  VaultFileStreamImpl.frbInternalSseDecode(BigInt ptr, int externalSizeOnNative)
+      : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
+
+  static final _kStaticData = RustArcStaticData(
+    rustArcIncrementStrongCount:
+        RustLib.instance.api.rust_arc_increment_strong_count_VaultFileStream,
+    rustArcDecrementStrongCount:
+        RustLib.instance.api.rust_arc_decrement_strong_count_VaultFileStream,
+    rustArcDecrementStrongCountPtr:
+        RustLib.instance.api.rust_arc_decrement_strong_count_VaultFileStreamPtr,
+  );
 }
 
 @sealed

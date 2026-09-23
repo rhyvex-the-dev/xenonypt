@@ -72,3 +72,28 @@ Future<Uint8List> vaultExtractFileToBytes(
         {required VaultHandle handle, required String obfuscatedName}) =>
     RustLib.instance.api.crateApiVaultExtractFileToBytes(
         handle: handle, obfuscatedName: obfuscatedName);
+
+/// Şifrəli fayla birbaşa giriş üçün `VaultFileStream` handle-i yaradır.
+/// Fayl tam yaddaşa yüklənmir; `vault_stream_read_chunk` çağırılanda yalnız
+/// tələb olunan parça diskdən oxunub deşifrə edilir.
+Future<VaultFileStream> vaultOpenStream(
+        {required VaultHandle handle, required String obfuscatedName}) =>
+    RustLib.instance.api.crateApiVaultOpenStream(
+        handle: handle, obfuscatedName: obfuscatedName);
+
+/// Deşifrə edilmiş (plaintext) ümumi fayl ölçüsünü baytla qaytarır.
+/// Dart tərəfindəki HTTP serverinin `Content-Length` başlığı üçün lazımdır.
+Future<BigInt> vaultStreamTotalSize({required VaultFileStream stream}) =>
+    RustLib.instance.api.crateApiVaultStreamTotalSize(stream: stream);
+
+/// Bir parçanın (chunk) plaintext ölçüsünü qaytarır (son parça xaricində 32 MiB).
+/// Dart tərəfi bu dəyərdən byte aralığını parça indeksinə çevirmək üçün istifadə edir.
+Future<BigInt> vaultStreamChunkSize({required VaultFileStream stream}) =>
+    RustLib.instance.api.crateApiVaultStreamChunkSize(stream: stream);
+
+/// Göstərilən parça indeksini diskdən oxuyub deşifrə edir.
+/// Yalnız bu parça yaddaşa gətirilir — öncəki parçalar tələb olunmur.
+Future<Uint8List> vaultStreamReadChunk(
+        {required VaultFileStream stream, required BigInt chunkIndex}) =>
+    RustLib.instance.api
+        .crateApiVaultStreamReadChunk(stream: stream, chunkIndex: chunkIndex);

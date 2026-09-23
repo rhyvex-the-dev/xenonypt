@@ -46,6 +46,8 @@ dependencies:
     path: rust_builder
   flutter_displaymode: ^0.7.0
   biometric_storage: ^5.0.1
+  shelf: ^1.4.2
+  shelf_router: ^1.1.4
 dev_dependencies:
   flutter_test:
     sdk: flutter

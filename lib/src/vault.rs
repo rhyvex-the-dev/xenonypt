@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use zeroize::{Zeroize, Zeroizing};
 
-const CHUNK_SIZE: usize = 1024 * 1024;
+const CHUNK_SIZE: usize = 32 * 1024 * 1024;
 const TAG_SIZE: usize = 16;
 const ENCRYPTED_CHUNK_SIZE: usize = CHUNK_SIZE + TAG_SIZE;
 const NONCE_SIZE: usize = 7;
@@ -889,5 +889,196 @@ impl VaultHandle {
             return Err("Fayl kassada tapılmadı".to_string());
         }
         decrypt_file_to_bytes(&source_path, &mek_bytes)
+    }
+
+    /// Böyük fayllar (xüsusən videolar) üçün: faylı tam olaraq yaddaşa
+    /// yükləmədən, hər dəfə yalnız tələb olunan parçanı (`chunk`) deşifrə
+    /// etmək imkanı verən `VaultFileStream` handle-i qaytarır.
+    /// Dart tərəfi bu handle-i localhost HTTP server vasitəsilə video
+    /// pleyerə axın (streaming) üçün istifadə edə bilər.
+    pub fn open_stream(&self, obfuscated_name: String) -> Result<VaultFileStream, String> {
+        let inner = self.lock_inner();
+        let mek = inner.mek.as_ref().ok_or("Kassa kilidlidir".to_string())?;
+        let vault_dir = inner.vault_dir.clone();
+        let mek_bytes: Zeroizing<[u8; 32]> = Zeroizing::new(**mek);
+        drop(inner);
+
+        VaultFileStream::open(vault_dir, obfuscated_name, mek_bytes)
+    }
+}
+
+// ---------------------------------------------------------------------
+// VaultFileStream — hər parçanı ayrıca, birbaşa disk oxuyub deşifrə edir
+// ---------------------------------------------------------------------
+
+struct VaultFileStreamInner {
+    file_path: PathBuf,
+    /// Faylın əvvəlindən oxunan 7 baytlıq nonce prefiksi (StreamBE32 formatı).
+    nonce_prefix: [u8; NONCE_SIZE],
+    mek_bytes: Zeroizing<[u8; 32]>,
+    /// Şifrəli fayldakı ümumi parça sayı.
+    chunk_count: u64,
+    /// Son parçanın şifrəli (disk üzərindəki) bayt sayı.
+    last_chunk_encrypted_size: u64,
+    /// Deşifrə edilmiş (plaintext) ümumi ölçü — HTTP Content-Length üçün lazımdır.
+    total_decrypted_size: u64,
+}
+
+impl Drop for VaultFileStreamInner {
+    fn drop(&mut self) {
+        self.mek_bytes.zeroize();
+    }
+}
+
+/// FRB tərəfindən Dart-da opaque klas kimi generasiya olunacaq stream handle.
+/// MEK bu strukturda qalır və Dart tərəfinə açıq ötürülmür.
+#[derive(Clone)]
+pub struct VaultFileStream {
+    inner: Arc<Mutex<VaultFileStreamInner>>,
+}
+
+impl VaultFileStream {
+    fn open(vault_dir: PathBuf, obfuscated_name: String, mek_bytes: Zeroizing<[u8; 32]>) -> Result<Self, String> {
+        let file_path = vault_dir.join(&obfuscated_name);
+        if !file_path.exists() {
+            return Err("Fayl kassada tapılmadı".to_string());
+        }
+
+        let file_len = fs::metadata(&file_path)
+            .map_err(|e| e.to_string())?
+            .len();
+
+        if file_len < NONCE_SIZE as u64 {
+            return Err("Fayl zədəlidir (çox kiçikdir)".to_string());
+        }
+
+        // Faylın əvvəlindən nonce prefiksini oxu
+        let mut nonce_prefix = [0u8; NONCE_SIZE];
+        {
+            let mut f = File::open(&file_path).map_err(|e| e.to_string())?;
+            f.read_exact(&mut nonce_prefix)
+                .map_err(|_| "Nonce oxuna bilmədi".to_string())?;
+        }
+
+        // Şifrəli payload ölçüsünü və parça sayını hesabla.
+        //
+        // StreamBE32 formatında hər parça (encrypt_next) tam ENCRYPTED_CHUNK_SIZE
+        // baytdır; yalnız son parça (encrypt_last) daha kiçik ola bilər.
+        //
+        // encrypted_payload_size = file_len - NONCE_SIZE
+        // full_chunks  = encrypted_payload_size / ENCRYPTED_CHUNK_SIZE
+        // last_enc_rem = encrypted_payload_size % ENCRYPTED_CHUNK_SIZE
+        //
+        // Əgər qalıq 0-dırsa, bütün parçalar tam ölçülüdür; son parçanın
+        // plaintext ölçüsü tam CHUNK_SIZE-dir. Əks halda, son şifrəli
+        // parça `last_enc_rem` baytdır və plaintext ölçüsü `last_enc_rem - TAG_SIZE`-dir.
+        let enc_payload_size = file_len - NONCE_SIZE as u64;
+        let full_chunks = enc_payload_size / ENCRYPTED_CHUNK_SIZE as u64;
+        let last_enc_rem = enc_payload_size % ENCRYPTED_CHUNK_SIZE as u64;
+
+        let (chunk_count, last_chunk_encrypted_size, last_chunk_plaintext_size) =
+            if last_enc_rem == 0 {
+                // Bütün parçalar tam ölçülüdür
+                (full_chunks, ENCRYPTED_CHUNK_SIZE as u64, CHUNK_SIZE as u64)
+            } else {
+                // Son parça daha kiçikdir
+                let last_pt = last_enc_rem.saturating_sub(TAG_SIZE as u64);
+                (full_chunks + 1, last_enc_rem, last_pt)
+            };
+
+        if chunk_count == 0 {
+            return Err("Fayl boşdur".to_string());
+        }
+
+        let total_decrypted_size =
+            (chunk_count - 1) * CHUNK_SIZE as u64 + last_chunk_plaintext_size;
+
+        Ok(VaultFileStream {
+            inner: Arc::new(Mutex::new(VaultFileStreamInner {
+                file_path,
+                nonce_prefix,
+                mek_bytes,
+                chunk_count,
+                last_chunk_encrypted_size,
+                total_decrypted_size,
+            })),
+        })
+    }
+
+    fn lock_inner(&self) -> std::sync::MutexGuard<'_, VaultFileStreamInner> {
+        match self.inner.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        }
+    }
+
+    /// Deşifrə edilmiş (plaintext) ümumi fayl ölçüsü (bayt).
+    /// HTTP `Content-Length` başlığı üçün istifadə olunur.
+    pub fn total_size(&self) -> u64 {
+        self.lock_inner().total_decrypted_size
+    }
+
+    /// Bir parçanın plaintext ölçüsü (son parça istisna olmaqla sabitdir: 32 MiB).
+    /// Dart tərəfi byte-aralığını parça indeksinə çevirərkən bu dəyərdən istifadə edir.
+    pub fn chunk_size(&self) -> u64 {
+        CHUNK_SIZE as u64
+    }
+
+    /// Göstərilən parça indeksini (`chunk_index`) birbaşa diskdən oxuyub deşifrə edir.
+    ///
+    /// **Nonce yenidən qurulması:** StreamBE32 nonce formatı deterministikdir:
+    ///   `full_nonce = prefix[0..7] ‖ BE32(chunk_index) ‖ last_flag`
+    /// Bu sayədə hər parça müstəqil olaraq, əvvəlki parçaları deşifrə etmədən
+    /// oxuna bilər — video üçün əsl `seeking` imkanı yaranır.
+    pub fn read_chunk(&self, chunk_index: u64) -> Result<Vec<u8>, String> {
+        let inner = self.lock_inner();
+
+        if chunk_index >= inner.chunk_count {
+            return Err(format!(
+                "Parça indeksi ({}) həddindən artıqdır (cəmi {} parça)",
+                chunk_index, inner.chunk_count
+            ));
+        }
+
+        let is_last = chunk_index == inner.chunk_count - 1;
+
+        // Şifrəli parçanın disk üzərindəki başlanğıc mövqeyi
+        let offset = NONCE_SIZE as u64 + chunk_index * ENCRYPTED_CHUNK_SIZE as u64;
+
+        // Parçanı diskdən oxu
+        let enc_len = if is_last {
+            inner.last_chunk_encrypted_size as usize
+        } else {
+            ENCRYPTED_CHUNK_SIZE
+        };
+
+        let mut enc_buf = vec![0u8; enc_len];
+        {
+            use std::io::Seek;
+            let mut f = File::open(&inner.file_path).map_err(|e| e.to_string())?;
+            f.seek(std::io::SeekFrom::Start(offset))
+                .map_err(|e| e.to_string())?;
+            f.read_exact(&mut enc_buf)
+                .map_err(|e| format!("Parça oxuna bilmədi (indeks {}): {}", chunk_index, e))?;
+        }
+
+        // StreamBE32 nonce-unu yenidən qur:
+        //   [0..7]  = 7 baytlıq prefix (faylın əvvəlindən oxunub)
+        //   [7..11] = chunk_index-i big-endian u32 kimi
+        //   [11]    = son parça bayrağı (0x01 = son, 0x00 = aralıq)
+        // Bu format aes-gcm crate-in StreamBE32 implementasiyası ilə tam uyğundur.
+        let mut nonce_bytes = [0u8; 12];
+        nonce_bytes[..7].copy_from_slice(&inner.nonce_prefix);
+        let idx32 = chunk_index as u32;
+        nonce_bytes[7..11].copy_from_slice(&idx32.to_be_bytes());
+        nonce_bytes[11] = if is_last { 1u8 } else { 0u8 };
+
+        // Birbaşa Aes256Gcm ilə deşifrə et (stream API-si yox)
+        let key = Key::<Aes256Gcm>::from_slice(&*inner.mek_bytes);
+        let aead = Aes256Gcm::new(key);
+        let nonce = GcmNonce::from_slice(&nonce_bytes);
+
+        aead.decrypt(nonce, enc_buf.as_slice())
+            .map_err(|e| format!("Parça deşifrəsi uğursuz oldu (indeks {}): {:?}", chunk_index, e))
     }
 }

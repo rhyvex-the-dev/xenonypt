@@ -7,7 +7,7 @@
 //! (versiyanızdan asılı olaraq əmr fərqli ola bilər — öz FRB
 //! quraşdırmanızdakı konfiqurasiyaya uyğunlaşdırın)
 
-pub use crate::vault::{VaultFileEntry, VaultHandle};
+pub use crate::vault::{VaultFileEntry, VaultHandle, VaultFileStream};
 
 /// Yeni kassa yaradır.
 pub fn vault_create_new(vault_dir: String, password: String) -> Result<VaultHandle, String> {
@@ -77,4 +77,39 @@ pub fn vault_extract_file_to_bytes(
     obfuscated_name: String,
 ) -> Result<Vec<u8>, String> {
     handle.extract_file_to_bytes(obfuscated_name)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Streaming API — böyük fayllar (video) üçün parça-parça deşifrə
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Şifrəli fayla birbaşa giriş üçün `VaultFileStream` handle-i yaradır.
+/// Fayl tam yaddaşa yüklənmir; `vault_stream_read_chunk` çağırılanda yalnız
+/// tələb olunan parça diskdən oxunub deşifrə edilir.
+pub fn vault_open_stream(
+    handle: &VaultHandle,
+    obfuscated_name: String,
+) -> Result<VaultFileStream, String> {
+    handle.open_stream(obfuscated_name)
+}
+
+/// Deşifrə edilmiş (plaintext) ümumi fayl ölçüsünü baytla qaytarır.
+/// Dart tərəfindəki HTTP serverinin `Content-Length` başlığı üçün lazımdır.
+pub fn vault_stream_total_size(stream: &VaultFileStream) -> u64 {
+    stream.total_size()
+}
+
+/// Bir parçanın (chunk) plaintext ölçüsünü qaytarır (son parça xaricində 32 MiB).
+/// Dart tərəfi bu dəyərdən byte aralığını parça indeksinə çevirmək üçün istifadə edir.
+pub fn vault_stream_chunk_size(stream: &VaultFileStream) -> u64 {
+    stream.chunk_size()
+}
+
+/// Göstərilən parça indeksini diskdən oxuyub deşifrə edir.
+/// Yalnız bu parça yaddaşa gətirilir — öncəki parçalar tələb olunmur.
+pub fn vault_stream_read_chunk(
+    stream: &VaultFileStream,
+    chunk_index: u64,
+) -> Result<Vec<u8>, String> {
+    stream.read_chunk(chunk_index)
 }
