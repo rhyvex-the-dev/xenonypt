@@ -18,15 +18,31 @@ use aes_gcm::aead::{Aead, KeyInit, OsRng};
 use aes_gcm::Nonce as StreamNonce;
 use aes_gcm::{Aes256Gcm, Key, Nonce as GcmNonce};
 use argon2::{Algorithm, Argon2, Params, Version};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Error as IoError, ErrorKind, Read, Result as IoResult, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Once};
 use zeroize::{Zeroize, Zeroizing};
 
-const CHUNK_SIZE: usize = 32 * 1024 * 1024;
+static RAYON_INIT: Once = Once::new();
+
+/// Global Rayon thread pool-u `available_parallelism - 2` (minimum 1) ilə konfiqurasiya edir.
+pub fn init_thread_pool() {
+    RAYON_INIT.call_once(|| {
+        let threads = std::thread::available_parallelism()
+            .map(|n| n.get().saturating_sub(2).max(1))
+            .unwrap_or(1);
+
+        let _ = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build_global();
+    });
+}
+
+const CHUNK_SIZE: usize = 4 * 1024 * 1024;
 const TAG_SIZE: usize = 16;
 const ENCRYPTED_CHUNK_SIZE: usize = CHUNK_SIZE + TAG_SIZE;
 const NONCE_SIZE: usize = 7;
@@ -64,6 +80,20 @@ pub struct VaultFileEntry {
     pub obfuscated_name: String,
     /// İstifadəçiyə göstərilən əsl fayl adı.
     pub original_name: String,
+}
+
+/// Növbə ilə fayl əlavə etmək üçün giriş parametri.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct VaultAddFileInput {
+    pub source_file_path: String,
+    pub original_name: String,
+}
+
+/// Növbə ilə fayl çıxarmaq üçün giriş parametri.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct VaultExtractFileInput {
+    pub obfuscated_name: String,
+    pub dest_path: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -229,53 +259,137 @@ fn encrypt_bytes_to_file(data: &[u8], dest_path: &Path, key_bytes: &[u8; 32]) ->
     Ok(())
 }
 
-fn encrypt_file_large(source_path: &Path, dest_path: &Path, key_bytes: &[u8; 32]) -> Result<(), String> {
-    let key = Key::<Aes256Gcm>::from_slice(key_bytes);
-    let mut nonce_bytes = [0u8; NONCE_SIZE];
-    OsRng.fill_bytes(&mut nonce_bytes);
-    let nonce = StreamNonce::from_slice(&nonce_bytes);
+/// Deterministik StreamBE32 nonce formatı:
+///   [0..7]  = 7 baytlıq təsadüfi prefix
+///   [7..11] = big-endian u32 chunk_index
+///   [11]    = 0x01 (son parça) və ya 0x00 (aralıq parça)
+pub(crate) fn derive_stream_nonce(
+    nonce_prefix: &[u8; NONCE_SIZE],
+    chunk_index: u64,
+    is_last: bool,
+) -> [u8; 12] {
+    let mut nonce_bytes = [0u8; 12];
+    nonce_bytes[..7].copy_from_slice(nonce_prefix);
+    let idx32 = chunk_index as u32;
+    nonce_bytes[7..11].copy_from_slice(&idx32.to_be_bytes());
+    nonce_bytes[11] = if is_last { 1u8 } else { 0u8 };
+    nonce_bytes
+}
 
-    let aead = Aes256Gcm::new(key);
-    let mut encryptor = EncryptorBE32::from_aead(aead, nonce);
+struct PlainChunk {
+    index: u64,
+    is_last: bool,
+    data: Vec<u8>,
+}
 
-    let source_file = File::open(source_path).map_err(|e| e.to_string())?;
-    let mut source_file = BufReader::new(source_file);
+struct EncryptedChunk {
+    index: u64,
+    is_last: bool,
+    data: Vec<u8>,
+}
+
+pub fn encrypt_file_parallel(
+    source_path: &Path,
+    dest_path: &Path,
+    key_bytes: &[u8; 32],
+) -> Result<(), String> {
+    init_thread_pool();
+
+    let mut source_file = File::open(source_path).map_err(|e| e.to_string())?;
+    let file_len = source_file.metadata().map_err(|e| e.to_string())?.len();
+
+    let mut nonce_prefix = [0u8; NONCE_SIZE];
+    OsRng.fill_bytes(&mut nonce_prefix);
 
     let tmp_path = tmp_path_for(dest_path);
-    {
-        let dest_file = File::create(&tmp_path).map_err(|e| e.to_string())?;
-        let mut dest_file = BufWriter::new(dest_file);
-        dest_file.write_all(&nonce_bytes).map_err(|e| e.to_string())?;
+    let dest_file = File::create(&tmp_path).map_err(|e| e.to_string())?;
+    let mut dest_writer = BufWriter::new(dest_file);
+    if let Err(e) = dest_writer.write_all(&nonce_prefix) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(e.to_string());
+    }
 
-        let mut current_buffer = vec![0u8; CHUNK_SIZE];
-        let mut next_buffer = vec![0u8; CHUNK_SIZE];
+    let total_chunks = if file_len == 0 {
+        1
+    } else {
+        (file_len + CHUNK_SIZE as u64 - 1) / CHUNK_SIZE as u64
+    };
 
-        let mut current_bytes =
-            read_exact_up_to_end(&mut source_file, &mut current_buffer).map_err(|e| e.to_string())?;
+    // Heterogen nüvələr (Big.LITTLE / performans və səmərəlilik nüvələri) üçün
+    // hər partiyaya kifayət qədər parça veririk ki, Rayon-un work-stealing
+    // mexanizmi dinamik olaraq sürətli nüvələri işlə yükləsin.
+    let batch_size = (rayon::current_num_threads() * 4).clamp(8, 32);
 
-        loop {
-            let next_bytes =
-                read_exact_up_to_end(&mut source_file, &mut next_buffer).map_err(|e| e.to_string())?;
+    let mut chunk_index: u64 = 0;
+    while chunk_index < total_chunks {
+        let current_batch_size = std::cmp::min(batch_size as u64, total_chunks - chunk_index) as usize;
+        let mut chunks = Vec::with_capacity(current_batch_size);
 
-            if next_bytes == 0 {
-                let encrypted_chunk = encryptor
-                    .encrypt_last(&current_buffer[..current_bytes])
-                    .map_err(|e| format!("{:?}", e))?;
-                dest_file.write_all(&encrypted_chunk).map_err(|e| e.to_string())?;
-                break;
-            } else {
-                let encrypted_chunk = encryptor
-                    .encrypt_next(&current_buffer[..current_bytes])
-                    .map_err(|e| format!("{:?}", e))?;
-                dest_file.write_all(&encrypted_chunk).map_err(|e| e.to_string())?;
-                std::mem::swap(&mut current_buffer, &mut next_buffer);
-                current_bytes = next_bytes;
+        for _ in 0..current_batch_size {
+            let is_last = chunk_index == total_chunks - 1;
+            let mut buf = vec![0u8; CHUNK_SIZE];
+            let n = match read_exact_up_to_end(&mut source_file, &mut buf) {
+                Ok(n) => n,
+                Err(e) => {
+                    let _ = fs::remove_file(&tmp_path);
+                    return Err(e.to_string());
+                }
+            };
+            buf.truncate(n);
+            chunks.push(PlainChunk {
+                index: chunk_index,
+                is_last,
+                data: buf,
+            });
+            chunk_index += 1;
+        }
+
+        // Rayon work-stealing: parçalar mövcud işçi thread-lər arasında paralel şifrələnir
+        let encrypted_chunks: Result<Vec<Vec<u8>>, String> = chunks
+            .into_par_iter()
+            .map(|chunk| {
+                let nonce_bytes = derive_stream_nonce(&nonce_prefix, chunk.index, chunk.is_last);
+                let nonce = GcmNonce::from_slice(&nonce_bytes);
+                let key = Key::<Aes256Gcm>::from_slice(key_bytes);
+                let aead = Aes256Gcm::new(key);
+                aead.encrypt(nonce, chunk.data.as_slice())
+                    .map_err(|e| format!("Şifrələmə xətası (parça {}): {:?}", chunk.index, e))
+            })
+            .collect();
+
+        let encrypted_chunks = match encrypted_chunks {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = fs::remove_file(&tmp_path);
+                return Err(e);
+            }
+        };
+
+        for enc in encrypted_chunks {
+            if let Err(e) = dest_writer.write_all(&enc) {
+                let _ = fs::remove_file(&tmp_path);
+                return Err(e.to_string());
             }
         }
-        dest_file.flush().map_err(|e| e.to_string())?;
     }
-    fs::rename(&tmp_path, dest_path).map_err(|e| e.to_string())?;
+
+    if let Err(e) = dest_writer.flush() {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(e.to_string());
+    }
+    drop(dest_writer);
+
+    fs::rename(&tmp_path, dest_path).map_err(|e| {
+        let _ = fs::remove_file(&tmp_path);
+        e.to_string()
+    })?;
+
     Ok(())
+}
+
+#[allow(dead_code)]
+fn encrypt_file_large(source_path: &Path, dest_path: &Path, key_bytes: &[u8; 32]) -> Result<(), String> {
+    encrypt_file_parallel(source_path, dest_path, key_bytes)
 }
 
 fn tmp_path_for(dest_path: &Path) -> PathBuf {
@@ -289,6 +403,7 @@ fn tmp_path_for(dest_path: &Path) -> PathBuf {
 /// sükutla EOF (Ok(0)) yox, EYNİ xətanı qaytarır — beləliklə
 /// korlanmış/manipulyasiya olunmuş fayl heç vaxt "uğurla tam oxundu"
 /// kimi yozulmur.
+#[allow(dead_code)]
 struct EncryptedFileReader {
     file: BufReader<File>,
     decryptor: Option<DecryptorBE32<Aes256Gcm>>,
@@ -301,6 +416,7 @@ struct EncryptedFileReader {
     poison: Option<String>,
 }
 
+#[allow(dead_code)]
 impl EncryptedFileReader {
     fn new(source_path: &Path, key_bytes: &[u8; 32]) -> Result<Self, String> {
         let file = File::open(source_path).map_err(|e| e.to_string())?;
@@ -408,23 +524,136 @@ impl Read for EncryptedFileReader {
     }
 }
 
-fn decrypt_file_to_writer(source_path: &Path, key_bytes: &[u8; 32], writer: &mut impl Write) -> Result<(), String> {
-    let mut reader = EncryptedFileReader::new(source_path, key_bytes)?;
-    let mut buffer = vec![0u8; 64 * 1024];
-    loop {
-        match reader.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(n) => writer.write_all(&buffer[..n]).map_err(|e| e.to_string())?,
-            Err(e) => return Err(e.to_string()),
+pub fn decrypt_file_parallel_to_writer(
+    source_path: &Path,
+    key_bytes: &[u8; 32],
+    writer: &mut impl Write,
+) -> Result<(), String> {
+    init_thread_pool();
+
+    let mut source_file = File::open(source_path).map_err(|e| e.to_string())?;
+    let file_len = source_file.metadata().map_err(|e| e.to_string())?.len();
+
+    if file_len < (NONCE_SIZE + TAG_SIZE) as u64 {
+        return Err("Fayl zədəlidir (çox kiçikdir)".to_string());
+    }
+
+    let mut nonce_prefix = [0u8; NONCE_SIZE];
+    source_file
+        .read_exact(&mut nonce_prefix)
+        .map_err(|_| "Nonce oxuna bilmədi".to_string())?;
+
+    let enc_payload_size = file_len - NONCE_SIZE as u64;
+    let full_chunks = enc_payload_size / ENCRYPTED_CHUNK_SIZE as u64;
+    let last_enc_rem = enc_payload_size % ENCRYPTED_CHUNK_SIZE as u64;
+
+    if last_enc_rem > 0 && (last_enc_rem as usize) < TAG_SIZE {
+        return Err("Fayl zədəlidir (son parça autentifikasiya teqindən kiçikdir)".to_string());
+    }
+
+    let (chunk_count, last_chunk_encrypted_size) = if last_enc_rem == 0 {
+        (full_chunks, ENCRYPTED_CHUNK_SIZE)
+    } else {
+        (full_chunks + 1, last_enc_rem as usize)
+    };
+
+    if chunk_count == 0 {
+        return Err("Fayl boşdur".to_string());
+    }
+
+    // Heterogen nüvələr üçün Rayon work-stealing partiya ölçüsü
+    let batch_size = (rayon::current_num_threads() * 4).clamp(8, 32);
+
+    let mut chunk_index: u64 = 0;
+    while chunk_index < chunk_count {
+        let current_batch_size = std::cmp::min(batch_size as u64, chunk_count - chunk_index) as usize;
+        let mut chunks = Vec::with_capacity(current_batch_size);
+
+        for _ in 0..current_batch_size {
+            let is_last = chunk_index == chunk_count - 1;
+            let enc_len = if is_last {
+                last_chunk_encrypted_size
+            } else {
+                ENCRYPTED_CHUNK_SIZE
+            };
+
+            let mut buf = vec![0u8; enc_len];
+            source_file
+                .read_exact(&mut buf)
+                .map_err(|e| format!("Parça oxuna bilmədi (indeks {}): {}", chunk_index, e))?;
+
+            chunks.push(EncryptedChunk {
+                index: chunk_index,
+                is_last,
+                data: buf,
+            });
+            chunk_index += 1;
+        }
+
+        // Rayon work-stealing: parçalar dinamik olaraq işçi thread-lər arasında deşifrələnir
+        let decrypted_chunks: Result<Vec<Vec<u8>>, String> = chunks
+            .into_par_iter()
+            .map(|chunk| {
+                let nonce_bytes = derive_stream_nonce(&nonce_prefix, chunk.index, chunk.is_last);
+                let nonce = GcmNonce::from_slice(&nonce_bytes);
+                let key = Key::<Aes256Gcm>::from_slice(key_bytes);
+                let aead = Aes256Gcm::new(key);
+                aead.decrypt(nonce, chunk.data.as_slice())
+                    .map_err(|e| format!("Deşifrələmə xətası (parça {}): {:?}", chunk.index, e))
+            })
+            .collect();
+
+        let decrypted_chunks = decrypted_chunks?;
+
+        for dec in decrypted_chunks {
+            writer.write_all(&dec).map_err(|e| e.to_string())?;
         }
     }
+
     Ok(())
 }
 
-fn decrypt_file_to_bytes(source_path: &Path, key_bytes: &[u8; 32]) -> Result<Vec<u8>, String> {
+pub fn decrypt_file_parallel(
+    source_path: &Path,
+    dest_path: &Path,
+    key_bytes: &[u8; 32],
+) -> Result<(), String> {
+    let tmp_path = tmp_path_for(dest_path);
+    {
+        let out_file = File::create(&tmp_path).map_err(|e| e.to_string())?;
+        let mut out_writer = BufWriter::new(out_file);
+        if let Err(e) = decrypt_file_parallel_to_writer(source_path, key_bytes, &mut out_writer) {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(e);
+        }
+        if let Err(e) = out_writer.flush() {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(e.to_string());
+        }
+    }
+    fs::rename(&tmp_path, dest_path).map_err(|e| {
+        let _ = fs::remove_file(&tmp_path);
+        e.to_string()
+    })?;
+    Ok(())
+}
+
+pub fn decrypt_file_parallel_to_bytes(
+    source_path: &Path,
+    key_bytes: &[u8; 32],
+) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
-    decrypt_file_to_writer(source_path, key_bytes, &mut out)?;
+    decrypt_file_parallel_to_writer(source_path, key_bytes, &mut out)?;
     Ok(out)
+}
+
+#[allow(dead_code)]
+fn decrypt_file_to_writer(source_path: &Path, key_bytes: &[u8; 32], writer: &mut impl Write) -> Result<(), String> {
+    decrypt_file_parallel_to_writer(source_path, key_bytes, writer)
+}
+
+fn decrypt_file_to_bytes(source_path: &Path, key_bytes: &[u8; 32]) -> Result<Vec<u8>, String> {
+    decrypt_file_parallel_to_bytes(source_path, key_bytes)
 }
 
 // ---------------------------------------------------------------------
@@ -531,6 +760,7 @@ impl Drop for VaultInner {
 #[derive(Clone)]
 pub struct VaultHandle {
     inner: Arc<Mutex<VaultInner>>,
+    file_queue_lock: Arc<Mutex<()>>,
 }
 
 impl VaultHandle {
@@ -546,6 +776,8 @@ impl VaultHandle {
     /// Yeni kassa yaradır və birbaşa açılmış (unlocked) handle qaytarır.
     /// `vault_dir` mövcud deyilsə yaradılır.
     pub fn create_new(vault_dir: String, password: String) -> Result<VaultHandle, String> {
+        init_thread_pool();
+
         let password = Zeroizing::new(password);
         let vault_path = PathBuf::from(&vault_dir);
 
@@ -607,6 +839,7 @@ impl VaultHandle {
                 metadata_name: Some(metadata_name),
                 metadata_backup_name: Some(metadata_backup_name),
             })),
+            file_queue_lock: Arc::new(Mutex::new(())),
         })
     }
 
@@ -616,6 +849,8 @@ impl VaultHandle {
     /// olunan yeganə (praktikada) namizəddir; GCM autentifikasiyası
     /// sayəsində uyğun olmayan fayl/parol cütü sükutla "uğurlu" sayılmır.
     pub fn unlock(vault_dir: String, password: String) -> Result<VaultHandle, String> {
+        init_thread_pool();
+
         let password = Zeroizing::new(password);
         let vault_path = PathBuf::from(&vault_dir);
 
@@ -669,6 +904,7 @@ impl VaultHandle {
                     metadata_name: Some(payload.metadata_name.clone()),
                     metadata_backup_name: Some(payload.metadata_backup_name.clone()),
                 })),
+                file_queue_lock: Arc::new(Mutex::new(())),
             });
         }
 
@@ -702,46 +938,76 @@ impl VaultHandle {
         self.lock_inner().mek.is_some()
     }
 
-    /// Fayl əlavə edir. Xəta halında diskdə yetim (orphan) şifrəli fayl
-    /// QALMIR — DÜZƏLİŞ: uğursuz metadata yazılışından sonra əlavə edilmiş
-    /// şifrəli fayl geri silinir.
-    pub fn add_file(&self, source_file_path: String, original_name: String) -> Result<String, String> {
-        let inner = self.lock_inner();
-        let mek = inner.mek.as_ref().ok_or("Kassa kilidlidir".to_string())?;
-        let metadata_name = inner.metadata_name.clone().ok_or("Kassa kilidlidir".to_string())?;
-        let metadata_backup_name = inner
-            .metadata_backup_name
-            .clone()
-            .ok_or("Kassa kilidlidir".to_string())?;
-        let vault_dir = inner.vault_dir.clone();
-        let mek_bytes: Zeroizing<[u8; 32]> = Zeroizing::new(**mek);
-        drop(inner); // uzun sürən şifrələmə zamanı mutex-i tutmuruq
+    /// Növbədən faylları bir-bir ardıcıl şifrələyib kassaya əlavə edir.
+    /// Hər fərdi fayl üçün onun parçaları Rayon ilə paralel emal olunur.
+    /// Metadata hər faylın tamamlanmasından sonra ardıcıl və təhlükəsiz yenilənir.
+    pub fn add_files(&self, files: Vec<VaultAddFileInput>) -> Result<Vec<VaultFileEntry>, String> {
+        let _queue_guard = self.file_queue_lock.lock().unwrap_or_else(|p| p.into_inner());
 
-        let obfuscated_name = random_hex_name();
-        let dest_encrypted_path = vault_dir.join(&obfuscated_name);
+        let mut results = Vec::with_capacity(files.len());
 
-        encrypt_file_large(Path::new(&source_file_path), &dest_encrypted_path, &mek_bytes)?;
+        for file_input in files {
+            let inner = self.lock_inner();
+            let mek = inner.mek.as_ref().ok_or("Kassa kilidlidir".to_string())?;
+            let metadata_name = inner.metadata_name.clone().ok_or("Kassa kilidlidir".to_string())?;
+            let metadata_backup_name = inner
+                .metadata_backup_name
+                .clone()
+                .ok_or("Kassa kilidlidir".to_string())?;
+            let vault_dir = inner.vault_dir.clone();
+            let mek_bytes: Zeroizing<[u8; 32]> = Zeroizing::new(**mek);
+            drop(inner); // şifrələmə zamanı inner mutex-i tutmuruq
 
-        let mut metadata = match load_metadata(&vault_dir, &mek_bytes, &metadata_name, &metadata_backup_name) {
-            Ok(m) => m,
-            Err(e) => {
+            let obfuscated_name = random_hex_name();
+            let dest_encrypted_path = vault_dir.join(&obfuscated_name);
+
+            // Rayon work-stealing ilə parçaların paralel şifrələnməsi
+            if let Err(e) = encrypt_file_parallel(
+                Path::new(&file_input.source_file_path),
+                &dest_encrypted_path,
+                &mek_bytes,
+            ) {
                 let _ = fs::remove_file(&dest_encrypted_path);
                 return Err(e);
             }
-        };
-        metadata.file_map.insert(obfuscated_name.clone(), original_name);
 
-        if let Err(e) = save_metadata(&vault_dir, &mek_bytes, &metadata_name, &metadata_backup_name, &metadata) {
-            // DÜZƏLİŞ: yetim faylı təmizləyirik ki, kassa ilə metadata
-            // sinxronsuz qalmasın.
-            let _ = fs::remove_file(&dest_encrypted_path);
-            return Err(e);
+            // Metadata-nın ardıcıl və təhlükəsiz yenilənməsi
+            let mut metadata = match load_metadata(&vault_dir, &mek_bytes, &metadata_name, &metadata_backup_name) {
+                Ok(m) => m,
+                Err(e) => {
+                    let _ = fs::remove_file(&dest_encrypted_path);
+                    return Err(e);
+                }
+            };
+            metadata.file_map.insert(obfuscated_name.clone(), file_input.original_name.clone());
+
+            if let Err(e) = save_metadata(&vault_dir, &mek_bytes, &metadata_name, &metadata_backup_name, &metadata) {
+                let _ = fs::remove_file(&dest_encrypted_path);
+                return Err(e);
+            }
+
+            results.push(VaultFileEntry {
+                obfuscated_name,
+                original_name: file_input.original_name,
+            });
         }
 
-        Ok(obfuscated_name)
+        Ok(results)
+    }
+
+    /// Tək fayl əlavə edir. Növbə mexanizmi vasitəsilə ardıcıl icra olunur,
+    /// parçaları Rayon ilə paralel şifrələnir.
+    pub fn add_file(&self, source_file_path: String, original_name: String) -> Result<String, String> {
+        let entries = self.add_files(vec![VaultAddFileInput {
+            source_file_path,
+            original_name,
+        }])?;
+        Ok(entries[0].obfuscated_name.clone())
     }
 
     pub fn delete_file(&self, obfuscated_name: String) -> Result<(), String> {
+        let _queue_guard = self.file_queue_lock.lock().unwrap_or_else(|p| p.into_inner());
+
         let inner = self.lock_inner();
         let mek = inner.mek.as_ref().ok_or("Kassa kilidlidir".to_string())?;
         let metadata_name = inner.metadata_name.clone().ok_or("Kassa kilidlidir".to_string())?;
@@ -849,35 +1115,48 @@ impl VaultHandle {
         Ok(loose)
     }
 
-    /// Faylı deşifrə edib GÖSTƏRİLƏN yola yazır (böyük fayllar üçün
-    /// tövsiyə olunan üsul — bütün məzmun Dart bridge-i üzərindən
-    /// keçmir, birbaşa diskə axır).
-    pub fn extract_file_to_path(&self, obfuscated_name: String, dest_path: String) -> Result<(), String> {
-        let inner = self.lock_inner();
-        let mek = inner.mek.as_ref().ok_or("Kassa kilidlidir".to_string())?;
-        let vault_dir = inner.vault_dir.clone();
-        let mek_bytes: Zeroizing<[u8; 32]> = Zeroizing::new(**mek);
-        drop(inner);
+    /// Növbədən faylları bir-bir ardıcıl deşifrə edib diskə çıxarır.
+    /// Hər fərdi fayl üçün onun parçaları Rayon ilə paralel deşifrələnir.
+    pub fn extract_files(&self, files: Vec<VaultExtractFileInput>) -> Result<(), String> {
+        let _queue_guard = self.file_queue_lock.lock().unwrap_or_else(|p| p.into_inner());
 
-        let source_path = vault_dir.join(&obfuscated_name);
-        if !source_path.exists() {
-            return Err("Fayl kassada tapılmadı".to_string());
+        for file_input in files {
+            let inner = self.lock_inner();
+            let mek = inner.mek.as_ref().ok_or("Kassa kilidlidir".to_string())?;
+            let vault_dir = inner.vault_dir.clone();
+            let mek_bytes: Zeroizing<[u8; 32]> = Zeroizing::new(**mek);
+            drop(inner);
+
+            let source_path = vault_dir.join(&file_input.obfuscated_name);
+            if !source_path.exists() {
+                return Err(format!("Fayl kassada tapılmadı: {}", file_input.obfuscated_name));
+            }
+
+            // Rayon work-stealing ilə parçaların paralel deşifrələnməsi
+            decrypt_file_parallel(
+                &source_path,
+                Path::new(&file_input.dest_path),
+                &mek_bytes,
+            )?;
         }
 
-        let tmp_out = tmp_path_for(Path::new(&dest_path));
-        {
-            let out_file = File::create(&tmp_out).map_err(|e| e.to_string())?;
-            let mut out_file = BufWriter::new(out_file);
-            decrypt_file_to_writer(&source_path, &mek_bytes, &mut out_file)?;
-            out_file.flush().map_err(|e| e.to_string())?;
-        }
-        fs::rename(&tmp_out, &dest_path).map_err(|e| e.to_string())?;
         Ok(())
     }
 
+    /// Faylı deşifrə edib GÖSTƏRİLƏN yola yazır. Növbə mexanizmi vasitəsilə
+    /// ardıcıl icra olunur, parçaları Rayon ilə paralel deşifrələnir.
+    pub fn extract_file_to_path(&self, obfuscated_name: String, dest_path: String) -> Result<(), String> {
+        self.extract_files(vec![VaultExtractFileInput {
+            obfuscated_name,
+            dest_path,
+        }])
+    }
+
     /// Kiçik fayllar üçün: deşifrə edilmiş bytes-ı birbaşa qaytarır.
-    /// Böyük fayllarda `extract_file_to_path` istifadə edin.
+    /// Növbə mexanizmi vasitəsilə ardıcıl icra olunur, parçaları Rayon ilə paralel deşifrələnir.
     pub fn extract_file_to_bytes(&self, obfuscated_name: String) -> Result<Vec<u8>, String> {
+        let _queue_guard = self.file_queue_lock.lock().unwrap_or_else(|p| p.into_inner());
+
         let inner = self.lock_inner();
         let mek = inner.mek.as_ref().ok_or("Kassa kilidlidir".to_string())?;
         let vault_dir = inner.vault_dir.clone();
@@ -888,7 +1167,7 @@ impl VaultHandle {
         if !source_path.exists() {
             return Err("Fayl kassada tapılmadı".to_string());
         }
-        decrypt_file_to_bytes(&source_path, &mek_bytes)
+        decrypt_file_parallel_to_bytes(&source_path, &mek_bytes)
     }
 
     /// Böyük fayllar (xüsusən videolar) üçün: faylı tam olaraq yaddaşa
@@ -1080,5 +1359,222 @@ impl VaultFileStream {
 
         aead.decrypt(nonce, enc_buf.as_slice())
             .map_err(|e| format!("Parça deşifrəsi uğursuz oldu (indeks {}): {:?}", chunk_index, e))
+    }
+}
+
+// ---------------------------------------------------------------------
+// Vahid testlər
+// ---------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn test_thread_pool_init_idempotent() {
+        init_thread_pool();
+        init_thread_pool();
+    }
+
+    #[test]
+    fn test_derive_stream_nonce() {
+        let prefix = [1, 2, 3, 4, 5, 6, 7];
+        let n0 = derive_stream_nonce(&prefix, 0, false);
+        assert_eq!(&n0[..7], &prefix);
+        assert_eq!(&n0[7..11], &[0, 0, 0, 0]);
+        assert_eq!(n0[11], 0);
+
+        let n1_last = derive_stream_nonce(&prefix, 42, true);
+        assert_eq!(&n1_last[..7], &prefix);
+        assert_eq!(&n1_last[7..11], &42u32.to_be_bytes());
+        assert_eq!(n1_last[11], 1);
+    }
+
+    #[test]
+    fn test_parallel_encryption_decryption_various_sizes() {
+        let dir = std::env::temp_dir().join("xenonypt_test_parallel");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let mut key = [0u8; 32];
+        OsRng.fill_bytes(&mut key);
+
+        let test_sizes = [
+            0,                      // boş fayl
+            100,                    // kiçik fayl
+            1024 * 1024,            // 1 MiB
+            CHUNK_SIZE,             // dəqiq 1 parça (4 MiB)
+            CHUNK_SIZE + 1024,      // 2 parça (4 MiB + 1 KiB)
+            CHUNK_SIZE * 2 + 500,   // 3 parça (~8.5 MiB)
+        ];
+
+        for (i, size) in test_sizes.iter().enumerate() {
+            let original_data: Vec<u8> = (0..*size).map(|b| (b % 251) as u8).collect();
+            let src_path = dir.join(format!("src_{}.bin", i));
+            let enc_path = dir.join(format!("enc_{}.bin", i));
+            let dec_path = dir.join(format!("dec_{}.bin", i));
+
+            {
+                let mut f = File::create(&src_path).unwrap();
+                f.write_all(&original_data).unwrap();
+            }
+
+            // Paralel şifrələmə
+            encrypt_file_parallel(&src_path, &enc_path, &key).unwrap();
+
+            // Paralel deşifrələmə (fayla)
+            decrypt_file_parallel(&enc_path, &dec_path, &key).unwrap();
+            let decrypted_file_bytes = fs::read(&dec_path).unwrap();
+            assert_eq!(original_data, decrypted_file_bytes, "Fayl ölçüsü {} üçün uyğunsuzluq", size);
+
+            // Paralel deşifrələmə (baytlara)
+            let decrypted_bytes = decrypt_file_parallel_to_bytes(&enc_path, &key).unwrap();
+            assert_eq!(original_data, decrypted_bytes, "Bytes deşifrəsi {} üçün uyğunsuzluq", size);
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_parallel_encrypted_stream_compatibility() {
+        let dir = std::env::temp_dir().join("xenonypt_test_stream_compat");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let mut key = [0u8; 32];
+        OsRng.fill_bytes(&mut key);
+
+        // 3 parça: 4 MiB + 4 MiB + 512 KiB = 8.5 MiB
+        let total_size = CHUNK_SIZE * 2 + 512 * 1024;
+        let original_data: Vec<u8> = (0..total_size).map(|b| (b % 241) as u8).collect();
+
+        let src_path = dir.join("video.mp4");
+        let enc_name = "enc_video".to_string();
+        let enc_path = dir.join(&enc_name);
+
+        {
+            let mut f = File::create(&src_path).unwrap();
+            f.write_all(&original_data).unwrap();
+        }
+
+        // Paralel şifrələyirik
+        encrypt_file_parallel(&src_path, &enc_path, &key).unwrap();
+
+        // VaultFileStream ilə açırıq (real-time streaming oxuyucusu)
+        let stream = VaultFileStream::open(dir.clone(), enc_name, Zeroizing::new(key)).unwrap();
+        assert_eq!(stream.total_size(), total_size as u64);
+        assert_eq!(stream.chunk_size(), CHUNK_SIZE as u64);
+
+        // Hər parçanı oxuyub birləşdiririk
+        let c0 = stream.read_chunk(0).unwrap();
+        let c1 = stream.read_chunk(1).unwrap();
+        let c2 = stream.read_chunk(2).unwrap();
+
+        assert_eq!(c0.len(), CHUNK_SIZE);
+        assert_eq!(c1.len(), CHUNK_SIZE);
+        assert_eq!(c2.len(), 512 * 1024);
+
+        let mut reassembled = Vec::new();
+        reassembled.extend_from_slice(&c0);
+        reassembled.extend_from_slice(&c1);
+        reassembled.extend_from_slice(&c2);
+
+        assert_eq!(reassembled, original_data);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_vault_queue_operations() {
+        let dir = std::env::temp_dir().join("xenonypt_test_vault_queue");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let vault_dir = dir.join("my_vault");
+        let handle = VaultHandle::create_new(
+            vault_dir.to_str().unwrap().to_string(),
+            "SuperPassword123!".to_string(),
+        ).unwrap();
+
+        assert!(handle.is_unlocked());
+
+        // Test faylları yaradırıq
+        let f1_path = dir.join("doc1.txt");
+        let f2_path = dir.join("doc2.txt");
+        let f3_path = dir.join("doc3.bin");
+
+        fs::write(&f1_path, b"Hello from doc 1!").unwrap();
+        fs::write(&f2_path, b"Hello from doc 2!").unwrap();
+        let f3_data: Vec<u8> = (0..1024 * 1024 * 5).map(|b| (b % 255) as u8).collect();
+        fs::write(&f3_path, &f3_data).unwrap();
+
+        // Növbə ilə çoxsaylı faylların ardıcıl əlavə olunması (add_files)
+        let queue_items = vec![
+            VaultAddFileInput {
+                source_file_path: f1_path.to_str().unwrap().to_string(),
+                original_name: "doc1.txt".to_string(),
+            },
+            VaultAddFileInput {
+                source_file_path: f2_path.to_str().unwrap().to_string(),
+                original_name: "doc2.txt".to_string(),
+            },
+            VaultAddFileInput {
+                source_file_path: f3_path.to_str().unwrap().to_string(),
+                original_name: "doc3.bin".to_string(),
+            },
+        ];
+
+        let entries = handle.add_files(queue_items).unwrap();
+        assert_eq!(entries.len(), 3);
+
+        let list = handle.list_files().unwrap();
+        assert_eq!(list.len(), 3);
+
+        // Növbə ilə çoxsaylı faylların ardıcıl çıxarılması (extract_files)
+        let out1 = dir.join("out1.txt");
+        let out2 = dir.join("out2.txt");
+        let out3 = dir.join("out3.bin");
+
+        let extract_queue = vec![
+            VaultExtractFileInput {
+                obfuscated_name: entries[0].obfuscated_name.clone(),
+                dest_path: out1.to_str().unwrap().to_string(),
+            },
+            VaultExtractFileInput {
+                obfuscated_name: entries[1].obfuscated_name.clone(),
+                dest_path: out2.to_str().unwrap().to_string(),
+            },
+            VaultExtractFileInput {
+                obfuscated_name: entries[2].obfuscated_name.clone(),
+                dest_path: out3.to_str().unwrap().to_string(),
+            },
+        ];
+
+        handle.extract_files(extract_queue).unwrap();
+
+        assert_eq!(fs::read(&out1).unwrap(), b"Hello from doc 1!");
+        assert_eq!(fs::read(&out2).unwrap(), b"Hello from doc 2!");
+        assert_eq!(fs::read(&out3).unwrap(), f3_data);
+
+        // Tək fayl bayt çıxarışı
+        let b1 = handle.extract_file_to_bytes(entries[0].obfuscated_name.clone()).unwrap();
+        assert_eq!(b1, b"Hello from doc 1!");
+
+        // Fayl silinməsi
+        handle.delete_file(entries[0].obfuscated_name.clone()).unwrap();
+        assert_eq!(handle.list_files().unwrap().len(), 2);
+
+        // Kilidlənmə və yenidən açılma
+        handle.lock();
+        assert!(!handle.is_unlocked());
+
+        let unlocked_handle = VaultHandle::unlock(
+            vault_dir.to_str().unwrap().to_string(),
+            "SuperPassword123!".to_string(),
+        ).unwrap();
+        assert_eq!(unlocked_handle.list_files().unwrap().len(), 2);
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

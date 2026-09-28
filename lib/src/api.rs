@@ -7,7 +7,33 @@
 //! (versiyanızdan asılı olaraq əmr fərqli ola bilər — öz FRB
 //! quraşdırmanızdakı konfiqurasiyaya uyğunlaşdırın)
 
-pub use crate::vault::{VaultFileEntry, VaultHandle, VaultFileStream};
+pub use crate::vault::{
+    init_thread_pool, VaultAddFileInput, VaultExtractFileInput, VaultFileEntry, VaultFileStream,
+    VaultHandle,
+};
+
+/// Global Rayon thread pool-u `available_parallelism - 2` (minimum 1) ilə konfiqurasiya edir.
+pub fn vault_init_thread_pool() {
+    init_thread_pool();
+}
+
+/// Növbədən faylları bir-bir ardıcıl şifrələyib kassaya əlavə edir.
+/// Hər fərdi faylın parçaları Rayon vasitəsilə paralel şifrələnir.
+pub fn vault_add_files(
+    handle: &VaultHandle,
+    files: Vec<VaultAddFileInput>,
+) -> Result<Vec<VaultFileEntry>, String> {
+    handle.add_files(files)
+}
+
+/// Növbədən faylları bir-bir ardıcıl deşifrə edib diskə çıxarır.
+/// Hər fərdi faylın parçaları Rayon vasitəsilə paralel deşifrələnir.
+pub fn vault_extract_files(
+    handle: &VaultHandle,
+    files: Vec<VaultExtractFileInput>,
+) -> Result<(), String> {
+    handle.extract_files(files)
+}
 
 /// Yeni kassa yaradır.
 pub fn vault_create_new(vault_dir: String, password: String) -> Result<VaultHandle, String> {

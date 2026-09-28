@@ -1,14 +1,15 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math' as dart_math;
 
 import 'package:android_intent_plus/android_intent.dart';
 import 'package:biometric_storage/biometric_storage.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_displaymode/flutter_displaymode.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'src/rust/api.dart';
 import 'src/rust/frb_generated.dart';
@@ -21,6 +22,8 @@ import 'src/rust/vault.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await RustLib.init();
+  // Loaded once up-front so theme settings apply from the very first frame.
+  final prefs = await SharedPreferences.getInstance();
 
   if(Platform.isAndroid) {
     try{
@@ -29,7 +32,10 @@ void main() async {
       //nothing 🙂
     }
   }
-  runApp(const XenonyptApp());
+  runApp(ProviderScope(
+    overrides: [sharedPreferencesProvider.overrideWithValue(prefs)],
+    child: const XenonyptApp(),
+  ));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -80,86 +86,36 @@ Future<BiometricStorageFile> _bioStorage(String path) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 
-class XenonyptApp extends StatelessWidget {
+class XenonyptApp extends ConsumerWidget {
   const XenonyptApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final mode = ref.watch(currentThemeProvider);
+    final oled = ref.watch(trueDarkOledProvider);
+
+    final ThemeData light;
+    final ThemeData dark;
+    final ThemeMode themeMode;
+    if (mode == AppThemeMode.system) {
+      // Follow the device: light/dark chosen by the OS, live.
+      light = AppThemes.themeFor(AppThemeMode.xenonyptLight);
+      dark = AppThemes.themeFor(AppThemeMode.xenonyptDark, oled: oled);
+      themeMode = ThemeMode.system;
+    } else {
+      final t = AppThemes.themeFor(mode, oled: oled);
+      light = t;
+      dark = t;
+      themeMode =
+          t.brightness == Brightness.dark ? ThemeMode.dark : ThemeMode.light;
+    }
+
     return MaterialApp(
       title: 'Xenonypt',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF080B0F),
-        colorScheme: const ColorScheme.dark(
-          primary: Color.fromARGB(255, 28, 183, 255),
-          secondary: Color(0xFF00E5CC),
-          surface: Color.fromARGB(255, 6, 9, 11),
-          error: Color.fromARGB(255, 255, 62, 62),
-        ),
-        fontFamily: 'monospace',
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: const Color.fromARGB(255, 10, 13, 17),
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Color(0xFF2A3A4A)),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Color(0xFF2A3A4A)),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide:
-                const BorderSide(color: Color(0xFF4FC3F7), width: 1.5),
-          ),
-          errorBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Color.fromARGB(255, 250, 53, 53)),
-          ),
-          focusedErrorBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide:
-                const BorderSide(color: Color.fromARGB(255, 253, 49, 49), width: 1.5),
-          ),
-          labelStyle: const TextStyle(color: Color(0xFF7A95B0)),
-          hintStyle: const TextStyle(color: Color(0xFF3D5166)),
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color.fromARGB(255, 57, 192, 255),
-            foregroundColor: const Color(0xFF080B0F),
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12)),
-            textStyle: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 15,
-                letterSpacing: 1.2),
-          ),
-        ),
-        outlinedButtonTheme: OutlinedButtonThemeData(
-          style: OutlinedButton.styleFrom(
-            foregroundColor: const Color.fromARGB(255, 50, 190, 255),
-            side: const BorderSide(color: Color(0xFF4FC3F7)),
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12)),
-            textStyle: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 15,
-                letterSpacing: 1.2),
-          ),
-        ),
-        snackBarTheme: const SnackBarThemeData(
-          backgroundColor: Color(0xFF1A2530),
-          contentTextStyle: TextStyle(color: Color(0xFFCFE8FF)),
-        ),
-      ),
+      theme: light,
+      darkTheme: dark,
+      themeMode: themeMode,
       home: const WelcomeScreen(),
     );
   }
@@ -285,6 +241,9 @@ class _WelcomeScreenState extends State<WelcomeScreen>
 
   @override
   Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    final secondary = Theme.of(context).colorScheme.secondary;
+    final surface = Theme.of(context).colorScheme.surface;
     return Scaffold(
       body: Stack(
         children: [
@@ -307,34 +266,34 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             border: Border.all(
-                              color: const Color(0xFF4FC3F7)
+                              color: primary
                                   .withValues(alpha: _glowAnim.value),
                               width: 1.5,
                             ),
                             boxShadow: [
                               BoxShadow(
-                                color: const Color(0xFF4FC3F7).withValues(
+                                color: primary.withValues(
                                     alpha: _glowAnim.value * 0.4),
                                 blurRadius: 24,
                                 spreadRadius: 4,
                               ),
                             ],
                           ),
-                          child: const Icon(
+                          child: Icon(
                             Icons.lock_outline_rounded,
                             size: 40,
-                            color: Color(0xFF4FC3F7),
+                            color: primary,
                           ),
                         ),
                       ),
                       const SizedBox(height: 24),
-                      const Text(
+                      Text(
                         'XENONYPT',
                         style: TextStyle(
                           fontSize: 28,
                           fontWeight: FontWeight.w900,
                           letterSpacing: 6,
-                          color: Color(0xFFCFE8FF),
+                          color: context.ac.text,
                         ),
                       ),
                       const SizedBox(height: 10),
@@ -343,8 +302,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                         style: TextStyle(
                           fontSize: 13,
                           letterSpacing: 2,
-                          color: const Color(0xFF4FC3F7)
-                              .withValues(alpha: 0.7),
+                          color: primary.withValues(alpha: 0.7),
                         ),
                       ),
                     ],
@@ -353,9 +311,9 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                   Container(
                     padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF0E1318),
+                      color: surface,
                       borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: const Color(0xFF1E2D3D)),
+                      border: Border.all(color: context.ac.divider),
                     ),
                     child: Column(
                       children: [
@@ -383,12 +341,12 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                           onPressed:
                               _loading ? null : _onOpenOrCreate,
                           icon: _loading
-                              ? const SizedBox(
+                              ? SizedBox(
                                   width: 18,
                                   height: 18,
                                   child: CircularProgressIndicator(
                                     strokeWidth: 2,
-                                    color: Color(0xFF080B0F),
+                                    color: Theme.of(context).scaffoldBackgroundColor,
                                   ),
                                 )
                               : const Icon(
@@ -404,8 +362,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 12,
-                          color: const Color(0xFF4FC3F7)
-                              .withValues(alpha: 0.5),
+                          color: primary.withValues(alpha: 0.5),
                         ),
                       ),
                     ],
@@ -530,16 +487,18 @@ class _UnlockVaultSheetState extends State<UnlockVaultSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    final surface = Theme.of(context).colorScheme.surface;
     return Padding(
       padding: EdgeInsets.only(
           bottom: MediaQuery.of(context).viewInsets.bottom),
       child: Container(
-        decoration: const BoxDecoration(
-          color: Color(0xFF0E1318),
+        decoration: BoxDecoration(
+          color: surface,
           borderRadius:
-              BorderRadius.vertical(top: Radius.circular(24)),
+              const BorderRadius.vertical(top: Radius.circular(24)),
           border: Border(
-              top: BorderSide(color: Color(0xFF1E2D3D))),
+              top: BorderSide(color: context.ac.divider)),
         ),
         padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
         child: Column(
@@ -552,7 +511,7 @@ class _UnlockVaultSheetState extends State<UnlockVaultSheet> {
                 width: 40,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF2A3A4A),
+                  color: context.ac.border,
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -563,15 +522,14 @@ class _UnlockVaultSheetState extends State<UnlockVaultSheet> {
                 Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF4FC3F7)
-                        .withValues(alpha: 0.1),
+                    color: primary.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(Icons.lock_open_rounded,
-                      color: Color(0xFF4FC3F7), size: 20),
+                  child: Icon(Icons.lock_open_rounded,
+                      color: primary, size: 20),
                 ),
                 const SizedBox(width: 12),
-                const Expanded(
+                Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -580,12 +538,12 @@ class _UnlockVaultSheetState extends State<UnlockVaultSheet> {
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
                               letterSpacing: 2,
-                              color: Color(0xFFCFE8FF))),
+                              color: context.ac.text)),
                       SizedBox(height: 2),
                       Text('Existing vault detected',
                           style: TextStyle(
                               fontSize: 12,
-                              color: Color(0xFF4FC3F7))),
+                              color: context.ac.textSecondary)),
                     ],
                   ),
                 ),
@@ -594,9 +552,9 @@ class _UnlockVaultSheetState extends State<UnlockVaultSheet> {
             const SizedBox(height: 6),
             Text(
               widget.directoryPath,
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 11,
-                  color: Color(0xFF3D5166),
+                  color: context.ac.textMuted,
                   fontFamily: 'monospace'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -608,14 +566,14 @@ class _UnlockVaultSheetState extends State<UnlockVaultSheet> {
               autofocus: !_biometricAvailable,
               decoration: InputDecoration(
                 labelText: 'Password',
-                prefixIcon: const Icon(Icons.key_rounded,
-                    color: Color(0xFF4FC3F7), size: 20),
+                prefixIcon: Icon(Icons.key_rounded,
+                    color: primary, size: 20),
                 suffixIcon: IconButton(
                   icon: Icon(
                       _obscure
                           ? Icons.visibility_off
                           : Icons.visibility,
-                      color: const Color(0xFF4FC3F7),
+                      color: primary,
                       size: 20),
                   onPressed: () =>
                       setState(() => _obscure = !_obscure),
@@ -631,12 +589,12 @@ class _UnlockVaultSheetState extends State<UnlockVaultSheet> {
                 onPressed:
                     _isLoading ? null : _unlockWithPassword,
                 child: _isLoading
-                    ? const SizedBox(
+                    ? SizedBox(
                         width: 20,
                         height: 20,
                         child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: Color(0xFF080B0F)))
+                            color: Theme.of(context).scaffoldBackgroundColor))
                     : const Text('UNLOCK'),
               ),
             ),
@@ -789,9 +747,10 @@ class _CreateVaultScreenState extends State<CreateVaultScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    final surface = Theme.of(context).colorScheme.surface;
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: const Color(0xFF080B0F),
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new_rounded,
@@ -817,22 +776,22 @@ class _CreateVaultScreenState extends State<CreateVaultScreen> {
                 padding: const EdgeInsets.symmetric(
                     horizontal: 14, vertical: 10),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF0E1318),
+                  color: surface,
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(
-                      color: const Color(0xFF1E2D3D)),
+                      color: context.ac.divider),
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.folder_rounded,
-                        color: Color(0xFF4FC3F7), size: 16),
+                    Icon(Icons.folder_rounded,
+                        color: primary, size: 16),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         widget.containerPath ?? widget.directoryPath,
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 12,
-                            color: Color(0xFF7A95B0),
+                            color: context.ac.textSecondary,
                             fontFamily: 'monospace'),
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -845,10 +804,10 @@ class _CreateVaultScreenState extends State<CreateVaultScreen> {
               // Vault name
               TextFormField(
                 controller: _nameCtrl,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Vault name (optional)',
                   prefixIcon: Icon(Icons.edit_rounded,
-                      color: Color(0xFF4FC3F7), size: 20),
+                      color: primary, size: 20),
                 ),
               ),
               const SizedBox(height: 16),
@@ -860,14 +819,14 @@ class _CreateVaultScreenState extends State<CreateVaultScreen> {
                 validator: _validatePassword,
                 decoration: InputDecoration(
                   labelText: 'Password',
-                  prefixIcon: const Icon(Icons.lock_rounded,
-                      color: Color(0xFF4FC3F7), size: 20),
+                  prefixIcon: Icon(Icons.lock_rounded,
+                      color: primary, size: 20),
                   suffixIcon: IconButton(
                     icon: Icon(
                         _obscurePw
                             ? Icons.visibility_off
                             : Icons.visibility,
-                        color: const Color(0xFF4FC3F7),
+                        color: primary,
                         size: 20),
                     onPressed: () =>
                         setState(() => _obscurePw = !_obscurePw),
@@ -895,14 +854,14 @@ class _CreateVaultScreenState extends State<CreateVaultScreen> {
                 },
                 decoration: InputDecoration(
                   labelText: 'Confirm password',
-                  prefixIcon: const Icon(Icons.lock_rounded,
-                      color: Color(0xFF4FC3F7), size: 20),
+                  prefixIcon: Icon(Icons.lock_rounded,
+                      color: primary, size: 20),
                   suffixIcon: IconButton(
                     icon: Icon(
                         _obscureConfirm
                             ? Icons.visibility_off
                             : Icons.visibility,
-                        color: const Color(0xFF4FC3F7),
+                        color: primary,
                         size: 20),
                     onPressed: () => setState(
                         () => _obscureConfirm = !_obscureConfirm),
@@ -915,28 +874,28 @@ class _CreateVaultScreenState extends State<CreateVaultScreen> {
               if (_isBiometricSupported) ...[
                 Container(
                   decoration: BoxDecoration(
-                    color: const Color(0xFF0E1318),
+                    color: surface,
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                        color: const Color(0xFF1E2D3D)),
+                        color: context.ac.divider),
                   ),
                   child: SwitchListTile(
                     value: _enableBiometric,
                     onChanged: (v) =>
                         setState(() => _enableBiometric = v),
-                    activeThumbColor: const Color(0xFF4FC3F7),
-                    secondary: const Icon(
+                    activeThumbColor: primary,
+                    secondary: Icon(
                         Icons.fingerprint_rounded,
-                        color: Color(0xFF4FC3F7)),
-                    title: const Text('Enable biometric login',
+                        color: primary),
+                    title: Text('Enable biometric login',
                         style: TextStyle(
                             fontSize: 14,
-                            color: Color(0xFFCFE8FF))),
-                    subtitle: const Text(
+                            color: context.ac.text)),
+                    subtitle: Text(
                         'Use fingerprint / face to unlock',
                         style: TextStyle(
                             fontSize: 12,
-                            color: Color(0xFF7A95B0))),
+                            color: context.ac.textSecondary)),
                   ),
                 ),
                 const SizedBox(height: 20),
@@ -980,12 +939,12 @@ class _CreateVaultScreenState extends State<CreateVaultScreen> {
                   onPressed:
                       _isCreating ? null : _createVault,
                   child: _isCreating
-                      ? const SizedBox(
+                      ? SizedBox(
                           width: 20,
                           height: 20,
                           child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: Color(0xFF080B0F)))
+                              color: Theme.of(context).scaffoldBackgroundColor))
                       : const Text('CREATE VAULT'),
                 ),
               ),
@@ -1082,15 +1041,12 @@ class _VaultContentScreenState extends State<VaultContentScreen>
           context: context,
           barrierDismissible: false,
           builder: (ctx) => AlertDialog(
-            backgroundColor: const Color(0xFF0E1318),
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            title: const Text('Unencrypted file found',
-                style: TextStyle(color: Color(0xFFCFE8FF))),
+            title: Text('Unencrypted file found',
+                style: TextStyle(color: context.ac.text)),
             content: Text(
               '"$name" is sitting in your vault folder but isn\'t encrypted yet. Add it to the vault?',
               style:
-                  const TextStyle(color: Color(0xFF7A95B0), fontSize: 13),
+                  TextStyle(color: context.ac.textSecondary, fontSize: 13),
             ),
             actions: [
               TextButton(
@@ -1128,15 +1084,15 @@ class _VaultContentScreenState extends State<VaultContentScreen>
           context: context,
           barrierDismissible: false,
           builder: (ctx) => AlertDialog(
-            backgroundColor: const Color(0xFF0E1318),
+            backgroundColor: context.ac.card,
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            title: const Text('Delete original?',
-                style: TextStyle(color: Color(0xFFCFE8FF))),
+            title: Text('Delete original?',
+                style: TextStyle(color: context.ac.text)),
             content: Text(
               '"$name" was encrypted into the vault. Delete the original plaintext copy?',
               style:
-                  const TextStyle(color: Color(0xFF7A95B0), fontSize: 13),
+                  TextStyle(color: context.ac.textSecondary, fontSize: 13),
             ),
             actions: [
               TextButton(
@@ -1204,6 +1160,18 @@ class _VaultContentScreenState extends State<VaultContentScreen>
         sourceFilePath: file.path!,
         originalName: file.name,
       );
+
+      // Delete the temporary copy that FilePicker placed in the app cache.
+      // Without this, the cache grows by the file size on every import.
+      try {
+        final tempFile = File(file.path!);
+        if (await tempFile.exists()) {
+          await tempFile.delete();
+        }
+      } catch (_) {
+        // Deletion failure is non-fatal — the vault already has the file.
+      }
+
       await _loadFiles();
     } catch (e) {
       if (mounted) {
@@ -1223,15 +1191,15 @@ class _VaultContentScreenState extends State<VaultContentScreen>
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF0E1318),
+        backgroundColor: context.ac.card,
         shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16)),
-        title: const Text('Delete file?',
-            style: TextStyle(color: Color(0xFFCFE8FF))),
+        title: Text('Delete file?',
+            style: TextStyle(color: context.ac.text)),
         content: Text(
           'Permanently delete "${entry.originalName}" from the vault?\nThis cannot be undone.',
-          style: const TextStyle(
-              color: Color(0xFF7A95B0), fontSize: 13),
+          style: TextStyle(
+              color: context.ac.textSecondary, fontSize: 13),
         ),
         actions: [
           TextButton(
@@ -1297,15 +1265,18 @@ class _VaultContentScreenState extends State<VaultContentScreen>
 
   @override
   Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
     return Scaffold(
-      backgroundColor: const Color(0xFF080B0F),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF080B0F),
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_forward_ios_rounded,
               size: 18),
-          onPressed: () => Navigator.push(context, _slideRoute(SettingsScreen(directoryPath: widget.directoryPath))),
+          onPressed: () => Navigator.push(context, _slideRoute(VaultNavigationDrawer(vaultName: widget.vaultName, onSettings: () {
+            Navigator.pop(context);
+            Navigator.push(
+                context, _slideRoute(SettingsScreen(directoryPath: widget.directoryPath)));
+          },),),)
         ),
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1319,22 +1290,22 @@ class _VaultContentScreenState extends State<VaultContentScreen>
             ),
             Text(
               '${_files.length} file${_files.length != 1 ? 's' : ''}',
-              style: const TextStyle(
-                  fontSize: 11, color: Color(0xFF4FC3F7)),
+              style: TextStyle(
+                  fontSize: 11, color: primary),
             ),
           ],
         ),
         actions: [
           IconButton(
             tooltip: 'Lock vault',
-            icon: const Icon(Icons.lock_rounded,
-                color: Color(0xFF4FC3F7)),
+            icon: Icon(Icons.lock_rounded,
+                color: primary),
             onPressed: _lockAndExit,
           ),
           IconButton(
             tooltip: 'Refresh',
-            icon: const Icon(Icons.refresh_rounded,
-                color: Color(0xFF7A95B0)),
+            icon: Icon(Icons.refresh_rounded,
+                color: context.ac.textSecondary),
             onPressed: _loadFiles,
           ),
         ],
@@ -1350,8 +1321,8 @@ class _VaultContentScreenState extends State<VaultContentScreen>
       body: _buildBody(),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _addFile,
-        backgroundColor: const Color(0xFF4FC3F7),
-        foregroundColor: const Color(0xFF080B0F),
+        backgroundColor: primary,
+        foregroundColor: Theme.of(context).scaffoldBackgroundColor,
         icon: const Icon(Icons.add_rounded),
         label: const Text('ADD FILE',
             style: TextStyle(
@@ -1361,10 +1332,11 @@ class _VaultContentScreenState extends State<VaultContentScreen>
   }
 
   Widget _buildBody() {
+    final primary = Theme.of(context).colorScheme.primary;
     if (_loading) {
-      return const Center(
+      return Center(
           child: CircularProgressIndicator(
-              color: Color(0xFF4FC3F7)));
+              color: primary));
     }
     if (_error != null) {
       return Center(
@@ -1376,7 +1348,7 @@ class _VaultContentScreenState extends State<VaultContentScreen>
             const SizedBox(height: 12),
             Text(_error!,
                 style:
-                    const TextStyle(color: Color(0xFF7A95B0)),
+                    TextStyle(color: context.ac.textSecondary),
                 textAlign: TextAlign.center),
             const SizedBox(height: 16),
             OutlinedButton(
@@ -1393,17 +1365,16 @@ class _VaultContentScreenState extends State<VaultContentScreen>
           children: [
             Icon(Icons.shield_rounded,
                 size: 64,
-                color: const Color(0xFF4FC3F7)
-                    .withValues(alpha: 0.3)),
+                color: primary.withValues(alpha: 0.3)),
             const SizedBox(height: 16),
-            const Text('Vault is empty',
+            Text('Vault is empty',
                 style: TextStyle(
-                    color: Color(0xFF7A95B0), fontSize: 16)),
+                    color: context.ac.textSecondary, fontSize: 16)),
             const SizedBox(height: 8),
-            const Text(
+            Text(
                 'Tap + ADD FILE to encrypt your first file',
                 style: TextStyle(
-                    color: Color(0xFF3D5166), fontSize: 13)),
+                    color: context.ac.textMuted, fontSize: 13)),
           ],
         ),
       );
@@ -1412,7 +1383,7 @@ class _VaultContentScreenState extends State<VaultContentScreen>
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
       itemCount: _files.length,
       separatorBuilder: (_, __) =>
-          const Divider(color: Color(0xFF1E2D3D), height: 1),
+          Divider(color: context.ac.divider, height: 1),
       itemBuilder: (ctx, i) {
         final entry = _files[i];
         return Dismissible(
@@ -1436,29 +1407,28 @@ class _VaultContentScreenState extends State<VaultContentScreen>
               width: 44,
               height: 44,
               decoration: BoxDecoration(
-                color: const Color(0xFF4FC3F7)
-                    .withValues(alpha: 0.08),
+                color: primary.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Icon(_iconForFile(entry.originalName),
-                  color: const Color(0xFF4FC3F7), size: 22),
+                  color: primary, size: 22),
             ),
             title: Text(
               entry.originalName,
-              style: const TextStyle(
-                  color: Color(0xFFCFE8FF), fontSize: 14),
+              style: TextStyle(
+                  color: context.ac.text, fontSize: 14),
               overflow: TextOverflow.ellipsis,
             ),
             subtitle: Text(
               entry.obfuscatedName,
-              style: const TextStyle(
-                  color: Color(0xFF3D5166),
+              style: TextStyle(
+                  color: context.ac.textMuted,
                   fontSize: 11,
                   fontFamily: 'monospace'),
               overflow: TextOverflow.ellipsis,
             ),
-            trailing: const Icon(Icons.chevron_right_rounded,
-                color: Color(0xFF3D5166)),
+            trailing: Icon(Icons.chevron_right_rounded,
+                color: context.ac.textMuted),
             onTap: () {
               // TODO: show file action sheet (extract / preview)
             },
@@ -1484,48 +1454,48 @@ class VaultNavigationDrawer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
     return Drawer(
-      backgroundColor: const Color(0xFF0E1318),
       child: SafeArea(
         child: Column(
           children: [
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(24),
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 border: Border(
                     bottom:
-                        BorderSide(color: Color(0xFF1E2D3D))),
+                        BorderSide(color: context.ac.divider)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.lock_rounded,
-                      color: Color(0xFF4FC3F7), size: 28),
+                  Icon(Icons.lock_rounded,
+                      color: primary, size: 28),
                   const SizedBox(height: 12),
                   Text(
                     vaultName,
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
-                        color: Color(0xFFCFE8FF),
+                        color: context.ac.text,
                         letterSpacing: 1),
                   ),
                   const SizedBox(height: 4),
-                  const Text('Active vault',
+                  Text('Active vault',
                       style: TextStyle(
                           fontSize: 12,
-                          color: Color(0xFF4FC3F7))),
+                          color: primary)),
                 ],
               ),
             ),
             const Expanded(child: SizedBox()),
-            const Divider(color: Color(0xFF1E2D3D)),
+            Divider(color: context.ac.divider),
             ListTile(
-              leading: const Icon(Icons.settings_rounded,
-                  color: Color(0xFF7A95B0)),
-              title: const Text('Settings',
-                  style: TextStyle(color: Color(0xFF7A95B0))),
+              leading: Icon(Icons.settings_rounded,
+                  color: context.ac.textSecondary),
+              title: Text('Settings',
+                  style: TextStyle(color: context.ac.textSecondary)),
               onTap: onSettings,
             ),
           ],
@@ -1536,19 +1506,505 @@ class VaultNavigationDrawer extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// THEME SYSTEM
+//   • AppThemeMode      – every selectable theme (+ "system")
+//   • _ThemePalette     – all colours of one theme (dark OR light)
+//   • AppColors         – ThemeExtension so widgets read colours via
+//                         `context.ac.*` instead of hardcoded hex values
+//   • AppThemes         – builds ThemeData (+ OLED variants) from palettes
+//   • ThemeNotifier / OledNotifier – persisted choices (loaded synchronously,
+//                         so there is no flash of the default theme at launch)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Set in main() with the already-loaded SharedPreferences instance.
+final sharedPreferencesProvider = Provider<SharedPreferences>(
+  (ref) => throw UnimplementedError(
+      'sharedPreferencesProvider must be overridden in main()'),
+);
+
+// NOTE: enum *names* are persisted in SharedPreferences – never rename them.
+enum AppThemeMode {
+  xenonyptDark,
+  amberLight,
+  amberDark,
+  purpleLight,
+  darkPurple,
+  darkGold,
+  darkXenonypt,
+  xenonyptLight,
+  system,
+}
+
+final currentThemeProvider =
+    NotifierProvider<ThemeNotifier, AppThemeMode>(ThemeNotifier.new);
+
+/// Semantic colours that Material's ColorScheme has no slot for.
+@immutable
+class AppColors extends ThemeExtension<AppColors> {
+  const AppColors({
+    required this.text,
+    required this.textSecondary,
+    required this.textMuted,
+    required this.border,
+    required this.divider,
+    required this.card,
+  });
+
+  final Color text; // primary text / titles
+  final Color textSecondary; // subtitles, descriptions
+  final Color textMuted; // hints, disabled, tertiary
+  final Color border; // outlines, sheet handles, dialog borders
+  final Color divider; // dividers, unfilled bars
+  final Color card; // dialogs / raised containers
+
+  @override
+  AppColors copyWith({
+    Color? text,
+    Color? textSecondary,
+    Color? textMuted,
+    Color? border,
+    Color? divider,
+    Color? card,
+  }) {
+    return AppColors(
+      text: text ?? this.text,
+      textSecondary: textSecondary ?? this.textSecondary,
+      textMuted: textMuted ?? this.textMuted,
+      border: border ?? this.border,
+      divider: divider ?? this.divider,
+      card: card ?? this.card,
+    );
+  }
+
+  @override
+  AppColors lerp(ThemeExtension<AppColors>? other, double t) {
+    if (other is! AppColors) return this;
+    return AppColors(
+      text: Color.lerp(text, other.text, t)!,
+      textSecondary: Color.lerp(textSecondary, other.textSecondary, t)!,
+      textMuted: Color.lerp(textMuted, other.textMuted, t)!,
+      border: Color.lerp(border, other.border, t)!,
+      divider: Color.lerp(divider, other.divider, t)!,
+      card: Color.lerp(card, other.card, t)!,
+    );
+  }
+}
+
+extension AppColorsContext on BuildContext {
+  AppColors get ac => Theme.of(this).extension<AppColors>()!;
+}
+
+class _ThemePalette {
+  final Brightness brightness;
+  final Color primary;
+  final Color secondary;
+  final Color background;
+  final Color surface;
+  final Color? onPrimaryOverride;
+  final Color error;
+  final Color text;
+  final Color textSecondary;
+  final Color textMuted;
+  final Color border;
+  final Color divider;
+  final Color card;
+
+  const _ThemePalette({
+    required this.primary,
+    required this.secondary,
+    required this.background,
+    required this.surface,
+    this.brightness = Brightness.dark,
+    this.onPrimaryOverride,
+    this.error = const Color(0xFFFF3E3E),
+    this.text = const Color(0xFFCFE8FF),
+    this.textSecondary = const Color(0xFF7A95B0),
+    this.textMuted = const Color(0xFF3D5166),
+    this.border = const Color(0xFF2A3A4A),
+    this.divider = const Color(0xFF1E2D3D),
+    this.card = const Color(0xFF0E1318),
+  });
+
+  /// Text/icon colour drawn on top of [primary] (buttons, FAB…).
+  Color get onPrimary =>
+      onPrimaryOverride ??
+      (brightness == Brightness.dark ? background : Colors.white);
+
+  /// Same theme with pure-black backgrounds (OLED). Dark themes only.
+  _ThemePalette toOled() => _ThemePalette(
+        brightness: brightness,
+        primary: primary,
+        secondary: secondary,
+        background: Colors.black,
+        surface: const Color(0xFF0A0A0A),
+        onPrimaryOverride: onPrimary,
+        error: error,
+        text: text,
+        textSecondary: textSecondary,
+        textMuted: textMuted,
+        border: border,
+        divider: divider,
+        card: const Color(0xFF0A0A0A),
+      );
+}
+
+class AppThemes {
+  static const Map<AppThemeMode, _ThemePalette> _palettes = {
+    // ── Xenonypt ──
+    AppThemeMode.xenonyptDark: _ThemePalette(
+      primary: Color.fromARGB(255, 28, 183, 255),
+      secondary: Color(0xFF00E5CC),
+      background: Color.fromARGB(255, 9, 12, 17),
+      surface: Color.fromARGB(255, 6, 9, 11),
+    ),
+    AppThemeMode.darkXenonypt: _ThemePalette(
+      primary: Color(0xFF4FC3F7),
+      secondary: Color(0xFF29B6F6),
+      background: Color.fromARGB(255, 6, 9, 12),
+      surface: Color(0xFF06090B),
+    ),
+    AppThemeMode.xenonyptLight: _ThemePalette(
+      brightness: Brightness.light,
+      primary: Color(0xFF0277BD),
+      secondary: Color(0xFF00897B),
+      background: Color(0xFFF4F8FB),
+      surface: Color(0xFFFFFFFF),
+      error: Color(0xFFD32F2F),
+      text: Color(0xFF0D1B2A),
+      textSecondary: Color(0xFF4A6178),
+      textMuted: Color(0xFF8DA2B5),
+      border: Color(0xFFC5D3E0),
+      divider: Color(0xFFDCE6EF),
+      card: Color(0xFFFFFFFF),
+    ),
+    // ── Amber ──
+    AppThemeMode.amberLight: _ThemePalette(
+      brightness: Brightness.light,
+      primary: Color(0xFFC77800),
+      secondary: Color(0xFFFFB300),
+      background: Color(0xFFFFF9EE),
+      surface: Color(0xFFFFFFFF),
+      error: Color(0xFFD32F2F),
+      text: Color(0xFF2B2113),
+      textSecondary: Color(0xFF6B5A3E),
+      textMuted: Color(0xFFA8977A),
+      border: Color(0xFFE6D8BC),
+      divider: Color(0xFFF0E4CB),
+      card: Color(0xFFFFFFFF),
+    ),
+    AppThemeMode.amberDark: _ThemePalette(
+      primary: Color(0xFFFFA000),
+      secondary: Color.fromARGB(255, 213, 146, 39),
+      background: Color.fromARGB(255, 15, 10, 5),
+      surface: Color(0xFF090601),
+    ),
+    // ── Purple ──
+    AppThemeMode.purpleLight: _ThemePalette(
+      brightness: Brightness.light,
+      primary: Color(0xFF7B1FA2),
+      secondary: Color(0xFFAB47BC),
+      background: Color(0xFFF8F3FB),
+      surface: Color(0xFFFFFFFF),
+      error: Color(0xFFD32F2F),
+      text: Color(0xFF1E1226),
+      textSecondary: Color(0xFF5E4A6E),
+      textMuted: Color(0xFF9C8BAA),
+      border: Color(0xFFDCCBE8),
+      divider: Color(0xFFEADFF2),
+      card: Color(0xFFFFFFFF),
+    ),
+    AppThemeMode.darkPurple: _ThemePalette(
+      primary: Color(0xFF673AB7),
+      secondary: Color(0xFF7C4DFF),
+      background: Color.fromARGB(255, 10, 6, 18),
+      surface: Color(0xFF060410),
+    ),
+    // ── Gold ──
+    AppThemeMode.darkGold: _ThemePalette(
+      primary: Color(0xFFFFD54F),
+      secondary: Color(0xFFFFEB3B),
+      background: Color.fromARGB(255, 14, 11, 4),
+      surface: Color(0xFF090701),
+    ),
+  };
+
+  /// Regular themes (every mode except `system`).
+  static final Map<AppThemeMode, ThemeData> themes = {
+    for (final e in _palettes.entries) e.key: _buildTheme(e.value),
+  };
+
+  /// Pure-black variants of the dark themes.
+  static final Map<AppThemeMode, ThemeData> _oledThemes = {
+    for (final e in _palettes.entries)
+      if (e.value.brightness == Brightness.dark)
+        e.key: _buildTheme(e.value.toOled()),
+  };
+
+  /// Resolves a mode to ThemeData. [mode] must not be `system`
+  /// (XenonyptApp handles that one via MaterialApp.themeMode).
+  static ThemeData themeFor(AppThemeMode mode, {bool oled = false}) {
+    assert(mode != AppThemeMode.system);
+    if (oled) {
+      final t = _oledThemes[mode];
+      if (t != null) return t;
+    }
+    return themes[mode]!;
+  }
+
+  /// Order shown in the theme picker.
+  static const List<AppThemeMode> pickerOrder = [
+    AppThemeMode.system,
+    AppThemeMode.xenonyptDark,
+    AppThemeMode.darkXenonypt,
+    AppThemeMode.xenonyptLight,
+    AppThemeMode.amberDark,
+    AppThemeMode.amberLight,
+    AppThemeMode.darkPurple,
+    AppThemeMode.purpleLight,
+    AppThemeMode.darkGold,
+  ];
+
+  /// Accent colour for the picker swatch (null for `system`).
+  static Color? swatch(AppThemeMode mode) => _palettes[mode]?.primary;
+
+  /// null for `system`.
+  static Brightness? brightnessOf(AppThemeMode mode) =>
+      _palettes[mode]?.brightness;
+
+  /// The dark/light sibling used by the "Dark mode" switch.
+  static AppThemeMode counterpart(AppThemeMode mode) {
+    switch (mode) {
+      case AppThemeMode.xenonyptDark:
+      case AppThemeMode.darkXenonypt:
+        return AppThemeMode.xenonyptLight;
+      case AppThemeMode.xenonyptLight:
+        return AppThemeMode.xenonyptDark;
+      case AppThemeMode.amberLight:
+        return AppThemeMode.amberDark;
+      case AppThemeMode.amberDark:
+      case AppThemeMode.darkGold:
+        return AppThemeMode.amberLight;
+      case AppThemeMode.purpleLight:
+        return AppThemeMode.darkPurple;
+      case AppThemeMode.darkPurple:
+        return AppThemeMode.purpleLight;
+      case AppThemeMode.system:
+        return AppThemeMode.system;
+    }
+  }
+
+  static String label(AppThemeMode mode) {
+    switch (mode) {
+      case AppThemeMode.system:
+        return 'System default';
+      case AppThemeMode.xenonyptDark:
+        return 'Xenonypt (Default)';
+      case AppThemeMode.darkXenonypt:
+        return 'Xenonypt Cyan';
+      case AppThemeMode.xenonyptLight:
+        return 'Xenonypt Light';
+      case AppThemeMode.amberLight:
+        return 'Amber Light';
+      case AppThemeMode.amberDark:
+        return 'Amber Dark';
+      case AppThemeMode.purpleLight:
+        return 'Purple Light';
+      case AppThemeMode.darkPurple:
+        return 'Deep Purple';
+      case AppThemeMode.darkGold:
+        return 'Gold';
+    }
+  }
+
+  static ThemeData _buildTheme(_ThemePalette p) {
+    final isDark = p.brightness == Brightness.dark;
+    final scheme = isDark
+        ? ColorScheme.dark(
+            primary: p.primary,
+            onPrimary: p.onPrimary,
+            secondary: p.secondary,
+            onSecondary: p.onPrimary,
+            surface: p.surface,
+            onSurface: p.text,
+            error: p.error,
+            onError: Colors.white,
+            outline: p.border,
+            outlineVariant: p.divider,
+          )
+        : ColorScheme.light(
+            primary: p.primary,
+            onPrimary: p.onPrimary,
+            secondary: p.secondary,
+            onSecondary: p.onPrimary,
+            surface: p.surface,
+            onSurface: p.text,
+            error: p.error,
+            onError: Colors.white,
+            outline: p.border,
+            outlineVariant: p.divider,
+          );
+
+    OutlineInputBorder outline(Color c, [double w = 1.0]) => OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: c, width: w),
+        );
+
+    return ThemeData(
+      useMaterial3: true,
+      brightness: p.brightness,
+      scaffoldBackgroundColor: p.background,
+      colorScheme: scheme,
+      fontFamily: 'monospace',
+      extensions: <ThemeExtension<dynamic>>[
+        AppColors(
+          text: p.text,
+          textSecondary: p.textSecondary,
+          textMuted: p.textMuted,
+          border: p.border,
+          divider: p.divider,
+          card: p.card,
+        ),
+      ],
+      appBarTheme: AppBarTheme(
+        backgroundColor: p.background,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
+        foregroundColor: p.text,
+        // Status-bar icons must contrast with the app bar in light themes.
+        systemOverlayStyle:
+            (isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark)
+                .copyWith(statusBarColor: Colors.transparent),
+      ),
+      drawerTheme: DrawerThemeData(
+        backgroundColor: p.surface,
+        surfaceTintColor: Colors.transparent,
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: p.surface,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      ),
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: p.surface,
+        surfaceTintColor: Colors.transparent,
+        shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      ),
+      dividerTheme: DividerThemeData(color: p.divider),
+      listTileTheme: ListTileThemeData(
+        textColor: p.text,
+        iconColor: p.primary,
+      ),
+      progressIndicatorTheme: ProgressIndicatorThemeData(color: p.primary),
+      textSelectionTheme: TextSelectionThemeData(
+        cursorColor: p.primary,
+        selectionHandleColor: p.primary,
+        selectionColor: p.primary.withValues(alpha: 0.30),
+      ),
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
+        backgroundColor: p.primary,
+        foregroundColor: p.onPrimary,
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(foregroundColor: p.primary),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: p.surface,
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+        border: outline(p.border),
+        enabledBorder: outline(p.border),
+        focusedBorder: outline(p.primary, 1.5),
+        errorBorder: outline(p.error),
+        focusedErrorBorder: outline(p.error, 1.5),
+        labelStyle: TextStyle(color: p.textSecondary),
+        hintStyle: TextStyle(color: p.textMuted),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: p.primary,
+          foregroundColor: p.onPrimary,
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          textStyle: const TextStyle(
+              fontWeight: FontWeight.bold, fontSize: 15, letterSpacing: 1.2),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: p.primary,
+          side: BorderSide(color: p.primary),
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          textStyle: const TextStyle(
+              fontWeight: FontWeight.bold, fontSize: 15, letterSpacing: 1.2),
+        ),
+      ),
+      snackBarTheme: SnackBarThemeData(
+        backgroundColor: p.surface,
+        contentTextStyle: TextStyle(color: p.text),
+      ),
+    );
+  }
+}
+
+class ThemeNotifier extends Notifier<AppThemeMode> {
+  static const _key = 'selected_theme';
+
+  @override
+  AppThemeMode build() {
+    final saved = ref.read(sharedPreferencesProvider).getString(_key);
+    return AppThemeMode.values.firstWhere(
+      (m) => m.name == saved,
+      orElse: () => AppThemeMode.xenonyptDark,
+    );
+  }
+
+  void setTheme(AppThemeMode mode) {
+    state = mode;
+    unawaited(ref.read(sharedPreferencesProvider).setString(_key, mode.name));
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OLED / TRUE DARK PROVIDER
+// ─────────────────────────────────────────────────────────────────────────────
+
+final trueDarkOledProvider =
+    NotifierProvider<OledNotifier, bool>(OledNotifier.new);
+
+class OledNotifier extends Notifier<bool> {
+  static const _key = 'true_dark_oled';
+
+  @override
+  bool build() =>
+      ref.read(sharedPreferencesProvider).getBool(_key) ?? false;
+
+  void setOled(bool val) {
+    state = val;
+    unawaited(ref.read(sharedPreferencesProvider).setBool(_key, val));
+  }
+}
+
+
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SETTINGS SCREEN
 // ─────────────────────────────────────────────────────────────────────────────
 
-class SettingsScreen extends StatefulWidget {
+class SettingsScreen extends ConsumerStatefulWidget {
   final String directoryPath;
   const SettingsScreen({super.key, required this.directoryPath});
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
-  bool _trueDarkOled = true;
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _enableBiometric = false;
   bool _isBiometricSupported = false;
   bool _isLoading = false;
@@ -1660,16 +2116,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
       barrierDismissible: false,
       builder: (ctx) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          backgroundColor: const Color(0xFF0E1318),
+          backgroundColor: context.ac.card,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Text('Confirm Password',
-              style: TextStyle(color: Color(0xFFCFE8FF))),
+          title: Text('Confirm Password',
+              style: TextStyle(color: context.ac.text)),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text(
+              Text(
                 'Enter your vault password to enable biometric login.',
-                style: TextStyle(color: Color(0xFF7A95B0), fontSize: 13),
+                style: TextStyle(color: context.ac.textSecondary, fontSize: 13),
               ),
               const SizedBox(height: 16),
               TextField(
@@ -1678,10 +2134,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 autofocus: true,
                 decoration: InputDecoration(
                   labelText: 'Password',
-                  prefixIcon: const Icon(Icons.lock_rounded, color: Color(0xFF4FC3F7)),
+                  prefixIcon: Icon(Icons.lock_rounded, color: Theme.of(context).colorScheme.primary),
                   suffixIcon: IconButton(
                     icon: Icon(obscure ? Icons.visibility_off : Icons.visibility,
-                        color: const Color(0xFF4FC3F7)),
+                        color: Theme.of(context).colorScheme.primary),
                     onPressed: () => setDialogState(() => obscure = !obscure),
                   ),
                 ),
@@ -1705,9 +2161,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: const Color(0xFF080B0F),
         elevation: 0,
         title: const Text('SETTINGS',
             style: TextStyle(
@@ -1721,42 +2178,70 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: Color(0xFF4FC3F7)))
+          ? Center(child: CircularProgressIndicator(color: primary))
           : ListView(
               children: [
                 const _SettingsHeader(title: 'APPEARANCE'),
-                const ListTile(
-                  leading: Icon(Icons.palette_rounded, color: Color(0xFF4FC3F7)),
-                  title: Text('Theme', style: TextStyle(color: Color(0xFFCFE8FF))),
-                  subtitle: Text('Dark (Xenonypt)',
-                      style: TextStyle(color: Color(0xFF7A95B0), fontSize: 12)),
+                ListTile(
+                  leading: Icon(Icons.palette_rounded, color: primary),
+                  title: Text('Theme', style: TextStyle(color: context.ac.text)),
+                  subtitle: Text(AppThemes.label(ref.watch(currentThemeProvider)),
+                      style: TextStyle(color: context.ac.textSecondary, fontSize: 12)),
+                  trailing: Icon(Icons.chevron_right_rounded,
+                      color: context.ac.textSecondary),
+                  onTap: _pickTheme,
                 ),
                 SwitchListTile(
-                  secondary: const Icon(Icons.brightness_1_rounded,
-                      color: Color(0xFF4FC3F7)),
-                  title: const Text('True dark / OLED',
-                      style: TextStyle(color: Color(0xFFCFE8FF))),
-                  subtitle: const Text('Pure black backgrounds',
-                      style: TextStyle(color: Color(0xFF7A95B0), fontSize: 12)),
-                  value: _trueDarkOled,
-                  onChanged: (val) => setState(() => _trueDarkOled = val),
+                  secondary: Icon(Icons.brightness_6_rounded, color: primary),
+                  title: Text('Dark mode',
+                      style: TextStyle(color: context.ac.text)),
+                  subtitle: Text('Switch between dark and light',
+                      style: TextStyle(
+                          color: context.ac.textSecondary, fontSize: 12)),
+                  value: isDarkMode,
+                  onChanged: (val) {
+                    final cur = ref.read(currentThemeProvider);
+                    final next = cur == AppThemeMode.system
+                        ? (val
+                            ? AppThemeMode.xenonyptDark
+                            : AppThemeMode.xenonyptLight)
+                        : AppThemes.counterpart(cur);
+                    ref.read(currentThemeProvider.notifier).setTheme(next);
+                  },
                 ),
-                const Divider(color: Color(0xFF1E2D3D)),
+                SwitchListTile(
+                  secondary:
+                      Icon(Icons.brightness_1_rounded, color: primary),
+                  title: Text('True dark / OLED',
+                      style: TextStyle(color: context.ac.text)),
+                  subtitle: Text(
+                      isDarkMode
+                          ? 'Pure black backgrounds'
+                          : 'Available in dark themes',
+                      style: TextStyle(
+                          color: context.ac.textSecondary, fontSize: 12)),
+                  value: ref.watch(trueDarkOledProvider),
+                  onChanged: isDarkMode
+                      ? (val) =>
+                          ref.read(trueDarkOledProvider.notifier).setOled(val)
+                      : null,
+                ),
+                Divider(color: context.ac.divider),
                 const _SettingsHeader(title: 'SECURITY'),
                 _buildTile(Icons.enhanced_encryption_rounded,
                     'Encryption', 'AES-256-GCM + Argon2id'),
                 if (_isBiometricSupported)
                   SwitchListTile(
-                    secondary: const Icon(Icons.fingerprint_rounded,
-                        color: Color(0xFF4FC3F7)),
-                    title: const Text('Biometric login',
-                        style: TextStyle(color: Color(0xFFCFE8FF))),
-                    subtitle: const Text('Enable or disable for this vault',
-                        style: TextStyle(color: Color(0xFF7A95B0), fontSize: 12)),
+                    secondary: Icon(Icons.fingerprint_rounded,
+                        color: primary),
+                    title: Text('Biometric login',
+                        style: TextStyle(color: context.ac.text)),
+                    subtitle: Text('Enable or disable for this vault',
+                        style: TextStyle(color: context.ac.textSecondary, fontSize: 12)),
                     value: _enableBiometric,
                     onChanged: _handleBiometricToggle,
                   ),
-                const Divider(color: Color(0xFF1E2D3D)),
+                Divider(color: context.ac.divider),
                 const _SettingsHeader(title: 'ABOUT'),
                 _buildTile(Icons.language_rounded, 'Language', 'English'),
                 _buildTile(Icons.code_rounded, 'Source code', 'Version: alpha'),
@@ -1768,8 +2253,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   title: const Text('Premium',
                       style: TextStyle(
                           color: Colors.amber, fontWeight: FontWeight.bold)),
-                  subtitle: const Text('Unlock advanced features',
-                      style: TextStyle(color: Color(0xFF7A95B0), fontSize: 12)),
+                  subtitle: Text('Unlock advanced features',
+                      style: TextStyle(color: context.ac.textSecondary, fontSize: 12)),
                   onTap: () {},
                 ),
               ],
@@ -1777,13 +2262,68 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  Future<void> _pickTheme() async {
+    final current = ref.read(currentThemeProvider);
+    final selected = await showModalBottomSheet<AppThemeMode>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) {
+        final sheetPrimary = Theme.of(ctx).colorScheme.primary;
+        return SafeArea(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 8),
+                for (final mode in AppThemes.pickerOrder)
+                  ListTile(
+                    leading: AppThemes.swatch(mode) == null
+                        ? Icon(Icons.brightness_auto_rounded,
+                            color: sheetPrimary)
+                        : Container(
+                            width: 24,
+                            height: 24,
+                            decoration: BoxDecoration(
+                              color: AppThemes.swatch(mode),
+                              shape: BoxShape.circle,
+                              border: Border.all(color: ctx.ac.border),
+                            ),
+                          ),
+                    title: Text(AppThemes.label(mode),
+                        style: TextStyle(color: ctx.ac.text)),
+                    subtitle: Text(
+                        switch (AppThemes.brightnessOf(mode)) {
+                          Brightness.dark => 'Dark',
+                          Brightness.light => 'Light',
+                          null => 'Follows your device',
+                        },
+                        style: TextStyle(
+                            color: ctx.ac.textSecondary, fontSize: 12)),
+                    trailing: mode == current
+                        ? Icon(Icons.check_circle_rounded, color: sheetPrimary)
+                        : null,
+                    onTap: () => Navigator.pop(ctx, mode),
+                  ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (selected != null) {
+      ref.read(currentThemeProvider.notifier).setTheme(selected);
+    }
+  }
+
   Widget _buildTile(IconData icon, String title, String subtitle) {
+    final primary = Theme.of(context).colorScheme.primary;
     return ListTile(
-      leading: Icon(icon, color: const Color(0xFF4FC3F7)),
-      title: Text(title, style: const TextStyle(color: Color(0xFFCFE8FF))),
+      leading: Icon(icon, color: primary),
+      title: Text(title, style: TextStyle(color: context.ac.text)),
       subtitle: subtitle.isNotEmpty
           ? Text(subtitle,
-              style: const TextStyle(color: Color(0xFF7A95B0), fontSize: 12))
+              style: TextStyle(color: context.ac.textSecondary, fontSize: 12))
           : null,
       onTap: () {},
     );
@@ -1805,8 +2345,8 @@ class _SettingsHeader extends StatelessWidget {
       padding: const EdgeInsets.only(left: 16, top: 20, bottom: 4),
       child: Text(
         title,
-        style: const TextStyle(
-          color: Color(0xFF4FC3F7),
+        style: TextStyle(
+          color: Theme.of(context).colorScheme.primary,
           fontWeight: FontWeight.bold,
           fontSize: 11,
           letterSpacing: 2,
@@ -1825,12 +2365,12 @@ class _InfoRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Icon(icon, size: 16, color: const Color(0xFF00E5CC)),
+        Icon(icon, size: 16, color: Theme.of(context).colorScheme.secondary),
         const SizedBox(width: 10),
         Expanded(
           child: Text(label,
-              style: const TextStyle(
-                  fontSize: 13, color: Color(0xFF7A95B0))),
+              style: TextStyle(
+                  fontSize: 13, color: context.ac.textSecondary)),
         ),
       ],
     );
@@ -1844,12 +2384,14 @@ class _PasswordStrengthBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const labels = ['', 'Weak', 'Fair', 'Strong', 'Very strong'];
-    const colors = [
-      Color(0xFF1E2D3D),
-      Color(0xFFFF5252),
-      Color(0xFFFFB347),
-      Color(0xFF4FC3F7),
-      Color(0xFF00E5CC),
+    // Strength colours are semantic (red -> cyan) and stay theme-independent;
+    // only the unfilled track follows the theme.
+    final colors = [
+      context.ac.divider,
+      const Color(0xFFFF5252),
+      const Color(0xFFFFB347),
+      const Color.fromARGB(255, 79, 195, 247),
+      const Color.fromARGB(255, 0, 229, 204),
     ];
     return Row(
       children: [
@@ -1864,7 +2406,7 @@ class _PasswordStrengthBar extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: i < strength
                         ? colors[strength]
-                        : const Color(0xFF1E2D3D),
+                        : context.ac.divider,
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -1887,94 +2429,6 @@ class _PasswordStrengthBar extends StatelessWidget {
       ],
     );
   }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ANIMATED HEX GRID BACKGROUND
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _HexGrid extends StatefulWidget {
-  const _HexGrid();
-
-  @override
-  State<_HexGrid> createState() => _HexGridState();
-}
-
-class _HexGridState extends State<_HexGrid>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-        vsync: this, duration: const Duration(seconds: 8))
-      ..repeat();
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _ctrl,
-      builder: (_, __) => CustomPaint(
-        painter: _HexGridPainter(_ctrl.value),
-        child: Container(),
-      ),
-    );
-  }
-}
-
-class _HexGridPainter extends CustomPainter {
-  final double progress;
-  _HexGridPainter(this.progress);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = const Color(0xFF4FC3F7).withValues(alpha: 0.035)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 0.5;
-
-    const spacing = 48.0;
-    final cols = (size.width / spacing).ceil() + 2;
-    final rows = (size.height / spacing).ceil() + 2;
-    final scrollOffset = (progress * spacing * 0.87) % (spacing * 0.87);
-
-    for (int r = -1; r < rows; r++) {
-      for (int c = -1; c < cols; c++) {
-        final ox = c * spacing + (r.isOdd ? spacing / 2 : 0);
-        final oy = r * spacing * 0.87 + scrollOffset;
-        _drawHex(canvas, paint, Offset(ox, oy), spacing / 2 - 2);
-      }
-    }
-  }
-
-  void _drawHex(
-      Canvas canvas, Paint paint, Offset center, double radius) {
-    final path = Path();
-    for (int i = 0; i < 6; i++) {
-      final angle = (i * 60 - 30) * dart_math.pi / 180;
-      final x = center.dx + radius * dart_math.cos(angle);
-      final y = center.dy + radius * dart_math.sin(angle);
-      if (i == 0) {
-        path.moveTo(x, y);
-      } else {
-        path.lineTo(x, y);
-      }
-    }
-    path.close();
-    canvas.drawPath(path, paint);
-  }
-
-  @override
-  bool shouldRepaint(_HexGridPainter oldDelegate) =>
-      oldDelegate.progress != progress;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2039,32 +2493,33 @@ class ManageStoragePermissionDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
     return AlertDialog(
-      backgroundColor: const Color(0xFF0F1722),
+      // background comes from dialogTheme (follows theme + OLED)
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(20),
-        side: const BorderSide(color: Color(0xFF2A3A4A), width: 1.5),
+        side: BorderSide(color: context.ac.border, width: 1.5),
       ),
       title: Row(
         children: [
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: const Color(0xFF1CB7FF).withValues(alpha: 0.15),
+              color: primary.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(
+            child: Icon(
               Icons.folder_special_rounded,
-              color: Color(0xFF1CB7FF),
+              color: primary,
               size: 28,
             ),
           ),
           const SizedBox(width: 14),
-          const Expanded(
+          Expanded(
             child: Text(
               'Full Storage Access',
               style: TextStyle(
-                color: Colors.white,
+                color: context.ac.text,
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
                 fontFamily: 'monospace',
@@ -2077,21 +2532,21 @@ class ManageStoragePermissionDialog extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
+          children: [
             Text(
               'Xenonypt requires All Files Access (MANAGE_EXTERNAL_STORAGE) to securely create, discover, and manage encrypted vaults across your device storage.',
               style: TextStyle(
-                color: Color(0xFF94A3B8),
+                color: context.ac.textSecondary,
                 fontSize: 14,
                 height: 1.5,
                 fontFamily: 'monospace',
               ),
             ),
-            SizedBox(height: 14),
+            const SizedBox(height: 14),
             Text(
               'Please grant full storage access in the system settings page to proceed seamlessly.',
               style: TextStyle(
-                color: Color(0xFF64748B),
+                color: context.ac.textSecondary,
                 fontSize: 13,
                 height: 1.4,
                 fontFamily: 'monospace',
@@ -2103,10 +2558,10 @@ class ManageStoragePermissionDialog extends StatelessWidget {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text(
+          child: Text(
             'Later',
             style: TextStyle(
-              color: Color(0xFF64748B),
+              color: context.ac.textSecondary,
               fontWeight: FontWeight.w600,
               fontFamily: 'monospace',
             ),
@@ -2115,8 +2570,6 @@ class ManageStoragePermissionDialog extends StatelessWidget {
         ElevatedButton.icon(
           onPressed: () => _openStorageSettings(context),
           style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF1CB7FF),
-            foregroundColor: const Color(0xFF080B0F),
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(10),
