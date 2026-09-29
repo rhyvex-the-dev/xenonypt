@@ -12,6 +12,50 @@ abstract class VaultFileStream implements RustOpaqueInterface {}
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<VaultHandle>>
 abstract class VaultHandle implements RustOpaqueInterface {}
 
+/// Növbə ilə fayl əlavə etmək üçün giriş parametri.
+class VaultAddFileInput {
+  final String sourceFilePath;
+  final String originalName;
+
+  const VaultAddFileInput({
+    required this.sourceFilePath,
+    required this.originalName,
+  });
+
+  @override
+  int get hashCode => sourceFilePath.hashCode ^ originalName.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is VaultAddFileInput &&
+          runtimeType == other.runtimeType &&
+          sourceFilePath == other.sourceFilePath &&
+          originalName == other.originalName;
+}
+
+/// Növbə ilə fayl çıxarmaq üçün giriş parametri.
+class VaultExtractFileInput {
+  final String obfuscatedName;
+  final String destPath;
+
+  const VaultExtractFileInput({
+    required this.obfuscatedName,
+    required this.destPath,
+  });
+
+  @override
+  int get hashCode => obfuscatedName.hashCode ^ destPath.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is VaultExtractFileInput &&
+          runtimeType == other.runtimeType &&
+          obfuscatedName == other.obfuscatedName &&
+          destPath == other.destPath;
+}
+
 /// Kassadakı bir faylın metadata qeydi. FRB bunu Dart-da adi bir
 /// klas (freezed olmayan sadə data class) kimi generasiya edəcək.
 class VaultFileEntry {

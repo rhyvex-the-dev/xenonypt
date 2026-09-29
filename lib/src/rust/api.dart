@@ -7,6 +7,25 @@ import 'frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'vault.dart';
 
+/// Global Rayon thread pool-u `available_parallelism - 2` (minimum 1) ilə konfiqurasiya edir.
+Future<void> vaultInitThreadPool() =>
+    RustLib.instance.api.crateApiVaultInitThreadPool();
+
+/// Növbədən faylları bir-bir ardıcıl şifrələyib kassaya əlavə edir.
+/// Hər fərdi faylın parçaları Rayon vasitəsilə paralel şifrələnir.
+Future<List<VaultFileEntry>> vaultAddFiles(
+        {required VaultHandle handle,
+        required List<VaultAddFileInput> files}) =>
+    RustLib.instance.api.crateApiVaultAddFiles(handle: handle, files: files);
+
+/// Növbədən faylları bir-bir ardıcıl deşifrə edib diskə çıxarır.
+/// Hər fərdi faylın parçaları Rayon vasitəsilə paralel deşifrələnir.
+Future<void> vaultExtractFiles(
+        {required VaultHandle handle,
+        required List<VaultExtractFileInput> files}) =>
+    RustLib.instance.api
+        .crateApiVaultExtractFiles(handle: handle, files: files);
+
 /// Yeni kassa yaradır.
 Future<VaultHandle> vaultCreateNew(
         {required String vaultDir, required String password}) =>
@@ -48,6 +67,16 @@ Future<void> vaultDeleteFile(
         {required VaultHandle handle, required String obfuscatedName}) =>
     RustLib.instance.api.crateApiVaultDeleteFile(
         handle: handle, obfuscatedName: obfuscatedName);
+
+/// Kassadakı faylın görünən adını yeniləyir (yalnız metadata dəyişir, fayl yenidən şifrələnmir).
+Future<void> vaultRenameFile(
+        {required VaultHandle handle,
+        required String obfuscatedName,
+        required String newOriginalName}) =>
+    RustLib.instance.api.crateApiVaultRenameFile(
+        handle: handle,
+        obfuscatedName: obfuscatedName,
+        newOriginalName: newOriginalName);
 
 /// Kassadakı bütün faylların siyahısını qaytarır.
 Future<List<VaultFileEntry>> vaultListFiles({required VaultHandle handle}) =>

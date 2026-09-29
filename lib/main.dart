@@ -10,6 +10,7 @@ import 'package:flutter_displaymode/flutter_displaymode.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:xenonypt/vault_viewer.dart';
 
 import 'src/rust/api.dart';
 import 'src/rust/frb_generated.dart';
@@ -25,10 +26,10 @@ void main() async {
   // Loaded once up-front so theme settings apply from the very first frame.
   final prefs = await SharedPreferences.getInstance();
 
-  if(Platform.isAndroid) {
-    try{
+  if (Platform.isAndroid) {
+    try {
       await FlutterDisplayMode.setHighRefreshRate();
-    } catch (_){
+    } catch (_) {
       //nothing 🙂
     }
   }
@@ -42,12 +43,6 @@ void main() async {
 // SECURE STORAGE KEY HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 
-// The vault *folder* itself must be as anonymous as the files vault.rs
-// already stores inside it (random hex name, no extension) — otherwise a
-// human-chosen folder name like "MyVault" or "Private" gives away exactly
-// what it is. This mirrors the 16-random-byte hex scheme vault.rs uses for
-// obfuscated_name, just generated on the Dart side before the folder exists.+++
-
 String _normalizeVaultDirPath(String path) {
   var p = path;
   while (p.length > 1 && (p.endsWith('/') || p.endsWith(r'\'))) {
@@ -59,19 +54,9 @@ String _normalizeVaultDirPath(String path) {
 String _bioEnabledKey(String path) =>
     'bio_enabled:${_normalizeVaultDirPath(path)}';
 
-// biometric_storage file names are used as on-disk identifiers by the
-// plugin, so keep them filesystem-safe and stable across app restarts.
 String _bioStorageName(String path) =>
     'bio_pw_${_normalizeVaultDirPath(path).replaceAll(RegExp(r'[^A-Za-z0-9]'), '_')}';
 
-// Every read/write of the biometric-protected secret must pass through
-// a fresh OS-level biometric check (no caching window). The resulting
-// storage is backed by a non-exportable, hardware-bound key
-// (Android Keystore w/ setUserAuthenticationRequired + invalidated on
-// new biometric enrollment; iOS Keychain w/ biometryCurrentSet), so
-// unlike the old "authenticate() then read a plain secret" flow, the
-// secret cannot be unwrapped by copying app data + vault folder to a
-// different device or enrolling a different fingerprint/face.
 Future<BiometricStorageFile> _bioStorage(String path) {
   return BiometricStorage().getStorage(
     _bioStorageName(path),
@@ -85,7 +70,6 @@ Future<BiometricStorageFile> _bioStorage(String path) {
 // APP ROOT
 // ─────────────────────────────────────────────────────────────────────────────
 
-
 class XenonyptApp extends ConsumerWidget {
   const XenonyptApp({super.key});
 
@@ -98,7 +82,6 @@ class XenonyptApp extends ConsumerWidget {
     final ThemeData dark;
     final ThemeMode themeMode;
     if (mode == AppThemeMode.system) {
-      // Follow the device: light/dark chosen by the OS, live.
       light = AppThemes.themeFor(AppThemeMode.xenonyptLight);
       dark = AppThemes.themeFor(AppThemeMode.xenonyptDark, oled: oled);
       themeMode = ThemeMode.system;
@@ -122,7 +105,7 @@ class XenonyptApp extends ConsumerWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WELCOME SCREEN  (single smart button)
+// WELCOME SCREEN
 // ─────────────────────────────────────────────────────────────────────────────
 
 class WelcomeScreen extends StatefulWidget {
@@ -193,14 +176,10 @@ class _WelcomeScreenState extends State<WelcomeScreen>
       if (!mounted) return;
       if (selectedPath == null) return;
 
-      // Auto-detect: vault.rs no longer writes a fixed ".vault_header"
-      // name, so ask it to scan for a header-shaped (fixed-size) file
-      // instead of checking a known filename ourselves.
       final isExisting = await vaultExists(vaultDir: selectedPath);
       if (!mounted) return;
 
       if (isExisting) {
-        // Vault already exists → show unlock sheet
         await showModalBottomSheet(
           context: context,
           isScrollControlled: true,
@@ -208,12 +187,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
           builder: (_) => UnlockVaultSheet(directoryPath: selectedPath),
         );
       } else {
-        // Fresh location → the folder the user just picked is only the
-        // *container*. The actual vault lives in a randomly-named,
-        // extension-less subfolder we generate here, so nothing about the
-        // on-disk name hints that it's a vault.
-        final vaultDirPath =
-            '$selectedPath${Platform.pathSeparator}';
+        final vaultDirPath = '$selectedPath${Platform.pathSeparator}';
         Navigator.push(
           context,
           _slideRoute(CreateVaultScreen(
@@ -242,19 +216,17 @@ class _WelcomeScreenState extends State<WelcomeScreen>
   @override
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
-    final secondary = Theme.of(context).colorScheme.secondary;
     final surface = Theme.of(context).colorScheme.surface;
     return Scaffold(
       body: Stack(
         children: [
           SafeArea(
             child: Padding(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 28.0, vertical: 36.0),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 28.0, vertical: 36.0),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  // ── Logo ──
                   Column(
                     children: [
                       const SizedBox(height: 40),
@@ -266,8 +238,8 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             border: Border.all(
-                              color: primary
-                                  .withValues(alpha: _glowAnim.value),
+                              color:
+                                  primary.withValues(alpha: _glowAnim.value),
                               width: 1.5,
                             ),
                             boxShadow: [
@@ -307,7 +279,6 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                       ),
                     ],
                   ),
-                  // ── Feature list ──
                   Container(
                     padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
@@ -317,43 +288,39 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                     ),
                     child: Column(
                       children: [
-                        _InfoRow(Icons.shield_rounded,
-                            'AES-256-GCM encryption'),
+                        _InfoRow(
+                            Icons.shield_rounded, 'AES-256-GCM encryption'),
                         const SizedBox(height: 12),
-                        _InfoRow(Icons.key_rounded,
-                            'Argon2id key derivation'),
+                        _InfoRow(
+                            Icons.key_rounded, 'Argon2id key derivation'),
                         const SizedBox(height: 12),
                         _InfoRow(Icons.fingerprint_rounded,
                             'Biometric authentication'),
                         const SizedBox(height: 12),
-                        _InfoRow(
-                            Icons.no_encryption_gmailerrorred_rounded,
+                        _InfoRow(Icons.no_encryption_gmailerrorred_rounded,
                             'Zero-knowledge — keys never leave device'),
                       ],
                     ),
                   ),
-                  // ── Smart button ──
                   Column(
                     children: [
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton.icon(
-                          onPressed:
-                              _loading ? null : _onOpenOrCreate,
+                          onPressed: _loading ? null : _onOpenOrCreate,
                           icon: _loading
                               ? SizedBox(
                                   width: 18,
                                   height: 18,
                                   child: CircularProgressIndicator(
                                     strokeWidth: 2,
-                                    color: Theme.of(context).scaffoldBackgroundColor,
+                                    color: Theme.of(context)
+                                        .scaffoldBackgroundColor,
                                   ),
                                 )
-                              : const Icon(
-                                  Icons.folder_open_rounded),
-                          label: Text(_loading
-                              ? 'DETECTING...'
-                              : 'OPEN / CREATE VAULT'),
+                              : const Icon(Icons.folder_open_rounded),
+                          label: Text(
+                              _loading ? 'DETECTING...' : 'OPEN / CREATE VAULT'),
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -433,8 +400,8 @@ class _UnlockVaultSheetState extends State<UnlockVaultSheet> {
       _errorText = null;
     });
     try {
-      final handle = await vaultUnlock(
-          vaultDir: widget.directoryPath, password: pw);
+      final handle =
+          await vaultUnlock(vaultDir: widget.directoryPath, password: pw);
       if (!mounted) return;
       Navigator.of(context).pop();
       Navigator.of(context).push(_slideRoute(
@@ -465,8 +432,8 @@ class _UnlockVaultSheetState extends State<UnlockVaultSheet> {
       );
       if (!mounted) return;
       if (pw == null || pw.isEmpty) {
-        setState(() => _errorText =
-            'No saved credentials — enter password manually');
+        setState(() =>
+            _errorText = 'No saved credentials — enter password manually');
         return;
       }
       await _unlockWithPassword(pw);
@@ -495,17 +462,14 @@ class _UnlockVaultSheetState extends State<UnlockVaultSheet> {
       child: Container(
         decoration: BoxDecoration(
           color: surface,
-          borderRadius:
-              const BorderRadius.vertical(top: Radius.circular(24)),
-          border: Border(
-              top: BorderSide(color: context.ac.divider)),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          border: Border(top: BorderSide(color: context.ac.divider)),
         ),
         padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // drag handle
             Center(
               child: Container(
                 width: 40,
@@ -539,11 +503,10 @@ class _UnlockVaultSheetState extends State<UnlockVaultSheet> {
                               fontWeight: FontWeight.bold,
                               letterSpacing: 2,
                               color: context.ac.text)),
-                      SizedBox(height: 2),
+                      const SizedBox(height: 2),
                       Text('Existing vault detected',
                           style: TextStyle(
-                              fontSize: 12,
-                              color: context.ac.textSecondary)),
+                              fontSize: 12, color: context.ac.textSecondary)),
                     ],
                   ),
                 ),
@@ -566,17 +529,13 @@ class _UnlockVaultSheetState extends State<UnlockVaultSheet> {
               autofocus: !_biometricAvailable,
               decoration: InputDecoration(
                 labelText: 'Password',
-                prefixIcon: Icon(Icons.key_rounded,
-                    color: primary, size: 20),
+                prefixIcon: Icon(Icons.key_rounded, color: primary, size: 20),
                 suffixIcon: IconButton(
                   icon: Icon(
-                      _obscure
-                          ? Icons.visibility_off
-                          : Icons.visibility,
+                      _obscure ? Icons.visibility_off : Icons.visibility,
                       color: primary,
                       size: 20),
-                  onPressed: () =>
-                      setState(() => _obscure = !_obscure),
+                  onPressed: () => setState(() => _obscure = !_obscure),
                 ),
                 errorText: _errorText,
               ),
@@ -586,8 +545,7 @@ class _UnlockVaultSheetState extends State<UnlockVaultSheet> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed:
-                    _isLoading ? null : _unlockWithPassword,
+                onPressed: _isLoading ? null : _unlockWithPassword,
                 child: _isLoading
                     ? SizedBox(
                         width: 20,
@@ -601,10 +559,8 @@ class _UnlockVaultSheetState extends State<UnlockVaultSheet> {
             if (_biometricAvailable) ...[
               const SizedBox(height: 12),
               OutlinedButton.icon(
-                onPressed:
-                    _isLoading ? null : _unlockWithBiometric,
-                icon: const Icon(Icons.fingerprint_rounded,
-                    size: 20),
+                onPressed: _isLoading ? null : _unlockWithBiometric,
+                icon: const Icon(Icons.fingerprint_rounded, size: 20),
                 label: const Text('USE BIOMETRIC'),
               ),
             ],
@@ -621,19 +577,14 @@ class _UnlockVaultSheetState extends State<UnlockVaultSheet> {
 
 class CreateVaultScreen extends StatefulWidget {
   final String directoryPath;
-  // The human-visible parent folder the user picked. directoryPath itself
-  // is the randomly-named subfolder that will actually hold the vault —
-  // we show containerPath in the UI instead so the random name doesn't
-  // need to mean anything to the user.
   final String? containerPath;
   const CreateVaultScreen(
       {super.key, required this.directoryPath, this.containerPath});
 
   @override
-  State<CreateVaultScreen> createState() =>
-      _CreateVaultScreenState();
+  State<CreateVaultScreen> createState() => _CreateVaultScreenState();
 }
-bool _enableBiometric = false;
+
 class _CreateVaultScreenState extends State<CreateVaultScreen> {
   final _formKey = GlobalKey<FormState>();
 
@@ -641,6 +592,7 @@ class _CreateVaultScreenState extends State<CreateVaultScreen> {
   final _pwCtrl = TextEditingController();
   final _confirmPwCtrl = TextEditingController();
 
+  bool _enableBiometric = false;
   bool _obscurePw = true;
   bool _obscureConfirm = true;
   bool _isBiometricSupported = false;
@@ -668,8 +620,9 @@ class _CreateVaultScreenState extends State<CreateVaultScreen> {
     if (v.length >= 8) s++;
     if (RegExp(r'[A-Z]').hasMatch(v)) s++;
     if (RegExp(r'[0-9]').hasMatch(v)) s++;
-    if (RegExp(r'[!@#\$&*~`()_\-+={[\]|:;<>,.?/\\]')
-        .hasMatch(v)) { s++; }
+    if (RegExp(r'[!@#\$&*~`()_\-+={[\]|:;<>,.?/\\]').hasMatch(v)) {
+      s++;
+    }
     setState(() => _strength = s);
   }
 
@@ -677,8 +630,8 @@ class _CreateVaultScreenState extends State<CreateVaultScreen> {
     try {
       final response = await BiometricStorage().canAuthenticate();
       if (mounted) {
-        setState(() => _isBiometricSupported =
-            response == CanAuthenticateResponse.success);
+        setState(() =>
+            _isBiometricSupported = response == CanAuthenticateResponse.success);
       }
     } catch (_) {
       if (mounted) setState(() => _isBiometricSupported = false);
@@ -701,23 +654,16 @@ class _CreateVaultScreenState extends State<CreateVaultScreen> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isCreating = true);
     try {
-      final name = _nameCtrl.text.trim().isEmpty
-          ? 'My Vault'
-          : _nameCtrl.text.trim();
+      final name =
+          _nameCtrl.text.trim().isEmpty ? 'My Vault' : _nameCtrl.text.trim();
       final pw = _pwCtrl.text;
 
-      final handle = await vaultCreateNew(
-          vaultDir: widget.directoryPath, password: pw);
+      final handle =
+          await vaultCreateNew(vaultDir: widget.directoryPath, password: pw);
 
-      // Persist biometric preference + biometric-gated password.
-      // The storage backing this is a non-exportable, hardware-bound
-      // key that requires a fresh OS biometric check on every read,
-      // so it can't be unwrapped by copying app data + vault folder
-      // to another device, or by a different enrolled fingerprint/face.
       if (_enableBiometric) {
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool(
-            _bioEnabledKey(widget.directoryPath), true);
+        await prefs.setBool(_bioEnabledKey(widget.directoryPath), true);
         final storage = await _bioStorage(widget.directoryPath);
         await storage.write(pw);
       }
@@ -753,15 +699,12 @@ class _CreateVaultScreenState extends State<CreateVaultScreen> {
       appBar: AppBar(
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded,
-              size: 18),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
           onPressed: () => Navigator.pop(context),
         ),
         title: const Text('CREATE VAULT',
             style: TextStyle(
-                fontSize: 14,
-                letterSpacing: 3,
-                fontWeight: FontWeight.bold)),
+                fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.bold)),
         centerTitle: true,
       ),
       body: SingleChildScrollView(
@@ -771,20 +714,17 @@ class _CreateVaultScreenState extends State<CreateVaultScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Path indicator
               Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 14, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 decoration: BoxDecoration(
                   color: surface,
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                      color: context.ac.divider),
+                  border: Border.all(color: context.ac.divider),
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.folder_rounded,
-                        color: primary, size: 16),
+                    Icon(Icons.folder_rounded, color: primary, size: 16),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -800,46 +740,35 @@ class _CreateVaultScreenState extends State<CreateVaultScreen> {
                 ),
               ),
               const SizedBox(height: 24),
-
-              // Vault name
               TextFormField(
                 controller: _nameCtrl,
                 decoration: InputDecoration(
                   labelText: 'Vault name (optional)',
-                  prefixIcon: Icon(Icons.edit_rounded,
-                      color: primary, size: 20),
+                  prefixIcon:
+                      Icon(Icons.edit_rounded, color: primary, size: 20),
                 ),
               ),
               const SizedBox(height: 16),
-
-              // Password
               TextFormField(
                 controller: _pwCtrl,
                 obscureText: _obscurePw,
                 validator: _validatePassword,
                 decoration: InputDecoration(
                   labelText: 'Password',
-                  prefixIcon: Icon(Icons.lock_rounded,
-                      color: primary, size: 20),
+                  prefixIcon:
+                      Icon(Icons.lock_rounded, color: primary, size: 20),
                   suffixIcon: IconButton(
                     icon: Icon(
-                        _obscurePw
-                            ? Icons.visibility_off
-                            : Icons.visibility,
+                        _obscurePw ? Icons.visibility_off : Icons.visibility,
                         color: primary,
                         size: 20),
-                    onPressed: () =>
-                        setState(() => _obscurePw = !_obscurePw),
+                    onPressed: () => setState(() => _obscurePw = !_obscurePw),
                   ),
                 ),
               ),
-
-              // Strength bar
               const SizedBox(height: 8),
               _PasswordStrengthBar(strength: _strength),
               const SizedBox(height: 16),
-
-              // Confirm password
               TextFormField(
                 controller: _confirmPwCtrl,
                 obscureText: _obscureConfirm,
@@ -854,8 +783,8 @@ class _CreateVaultScreenState extends State<CreateVaultScreen> {
                 },
                 decoration: InputDecoration(
                   labelText: 'Confirm password',
-                  prefixIcon: Icon(Icons.lock_rounded,
-                      color: primary, size: 20),
+                  prefixIcon:
+                      Icon(Icons.lock_rounded, color: primary, size: 20),
                   suffixIcon: IconButton(
                     icon: Icon(
                         _obscureConfirm
@@ -863,54 +792,41 @@ class _CreateVaultScreenState extends State<CreateVaultScreen> {
                             : Icons.visibility,
                         color: primary,
                         size: 20),
-                    onPressed: () => setState(
-                        () => _obscureConfirm = !_obscureConfirm),
+                    onPressed: () =>
+                        setState(() => _obscureConfirm = !_obscureConfirm),
                   ),
                 ),
               ),
               const SizedBox(height: 20),
-
-              // Biometric toggle
               if (_isBiometricSupported) ...[
                 Container(
                   decoration: BoxDecoration(
                     color: surface,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                        color: context.ac.divider),
+                    border: Border.all(color: context.ac.divider),
                   ),
                   child: SwitchListTile(
                     value: _enableBiometric,
-                    onChanged: (v) =>
-                        setState(() => _enableBiometric = v),
+                    onChanged: (v) => setState(() => _enableBiometric = v),
                     activeThumbColor: primary,
-                    secondary: Icon(
-                        Icons.fingerprint_rounded,
-                        color: primary),
+                    secondary:
+                        Icon(Icons.fingerprint_rounded, color: primary),
                     title: Text('Enable biometric login',
+                        style: TextStyle(fontSize: 14, color: context.ac.text)),
+                    subtitle: Text('Use fingerprint / face to unlock',
                         style: TextStyle(
-                            fontSize: 14,
-                            color: context.ac.text)),
-                    subtitle: Text(
-                        'Use fingerprint / face to unlock',
-                        style: TextStyle(
-                            fontSize: 12,
-                            color: context.ac.textSecondary)),
+                            fontSize: 12, color: context.ac.textSecondary)),
                   ),
                 ),
                 const SizedBox(height: 20),
               ],
-
-              // Warning box
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFF5252)
-                      .withValues(alpha: 0.07),
+                  color: const Color(0xFFFF5252).withValues(alpha: 0.07),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                      color: const Color(0xFFFF5252)
-                          .withValues(alpha: 0.4)),
+                      color: const Color(0xFFFF5252).withValues(alpha: 0.4)),
                 ),
                 child: const Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -932,12 +848,10 @@ class _CreateVaultScreenState extends State<CreateVaultScreen> {
                 ),
               ),
               const SizedBox(height: 28),
-
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed:
-                      _isCreating ? null : _createVault,
+                  onPressed: _isCreating ? null : _createVault,
                   child: _isCreating
                       ? SizedBox(
                           width: 20,
@@ -973,8 +887,7 @@ class VaultContentScreen extends StatefulWidget {
   });
 
   @override
-  State<VaultContentScreen> createState() =>
-      _VaultContentScreenState();
+  State<VaultContentScreen> createState() => _VaultContentScreenState();
 }
 
 class _VaultContentScreenState extends State<VaultContentScreen>
@@ -983,6 +896,47 @@ class _VaultContentScreenState extends State<VaultContentScreen>
   bool _loading = true;
   String? _error;
   bool _isPickingFile = false;
+
+  // ── Multi-select ──────────────────────────────────────────────────────────
+  bool _selectMode = false;
+  final Set<String> _selected = {}; // stores obfuscatedNames
+
+  void _enterSelectMode(String initialObfuscatedName) {
+    setState(() {
+      _selectMode = true;
+      _selected.add(initialObfuscatedName);
+    });
+  }
+
+  void _exitSelectMode() {
+    setState(() {
+      _selectMode = false;
+      _selected.clear();
+    });
+  }
+
+  void _toggleSelect(String obfuscatedName) {
+    setState(() {
+      if (_selected.contains(obfuscatedName)) {
+        _selected.remove(obfuscatedName);
+        if (_selected.isEmpty) _selectMode = false;
+      } else {
+        _selected.add(obfuscatedName);
+      }
+    });
+  }
+
+  void _selectAll() {
+    setState(() {
+      if (_selected.length == _files.length) {
+        _selected.clear();
+        _selectMode = false;
+      } else {
+        _selected.clear();
+        _selected.addAll(_files.map((f) => f.obfuscatedName));
+      }
+    });
+  }
 
   @override
   void initState() {
@@ -998,26 +952,19 @@ class _VaultContentScreenState extends State<VaultContentScreen>
     super.dispose();
   }
 
-  // Locks the moment the app leaves the foreground (backgrounded, app
-  // switcher, screen off) or is being torn down — not just on a clean
-  // exit. `inactive` (e.g. a brief system dialog/incoming call overlay)
-  // is deliberately excluded so we don't re-lock on every tiny interrupt.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (_isPickingFile) return;
 
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
+      VaultMediaRegistry.onVaultLocked(widget.vaultHandle);
       vaultLock(handle: widget.vaultHandle);
     } else if (state == AppLifecycleState.resumed) {
       _bounceToWelcomeIfLocked();
     }
   }
 
-  // If the OS kept this screen alive in the background (rather than fully
-  // killing the process) the handle is now locked but the UI would still
-  // be sitting on the file list — kick the user back to the unlock flow
-  // instead of showing stale content or letting a call silently fail.
   Future<void> _bounceToWelcomeIfLocked() async {
     try {
       final unlocked = await vaultIsUnlocked(handle: widget.vaultHandle);
@@ -1027,14 +974,9 @@ class _VaultContentScreenState extends State<VaultContentScreen>
     } catch (_) {}
   }
 
-  // Files that were sitting in the vault folder before it became a vault
-  // (or dropped in later outside the app) show up here unencrypted. Offer
-  // to pull each one into the vault, then ask separately whether to
-  // remove the plaintext original.
   Future<void> _scanForLooseFiles() async {
     try {
-      final looseNames =
-          await vaultListLooseFiles(handle: widget.vaultHandle);
+      final looseNames = await vaultListLooseFiles(handle: widget.vaultHandle);
       for (final name in looseNames) {
         if (!mounted) return;
         final shouldEncrypt = await showDialog<bool>(
@@ -1045,8 +987,7 @@ class _VaultContentScreenState extends State<VaultContentScreen>
                 style: TextStyle(color: context.ac.text)),
             content: Text(
               '"$name" is sitting in your vault folder but isn\'t encrypted yet. Add it to the vault?',
-              style:
-                  TextStyle(color: context.ac.textSecondary, fontSize: 13),
+              style: TextStyle(color: context.ac.textSecondary, fontSize: 13),
             ),
             actions: [
               TextButton(
@@ -1072,8 +1013,7 @@ class _VaultContentScreenState extends State<VaultContentScreen>
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                   content: Text('Failed to encrypt "$name": $e'),
-                  backgroundColor:
-                      const Color.fromARGB(255, 253, 50, 50)),
+                  backgroundColor: const Color.fromARGB(255, 253, 50, 50)),
             );
           }
           continue;
@@ -1087,12 +1027,11 @@ class _VaultContentScreenState extends State<VaultContentScreen>
             backgroundColor: context.ac.card,
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            title: Text('Delete original?',
-                style: TextStyle(color: context.ac.text)),
+            title:
+                Text('Delete original?', style: TextStyle(color: context.ac.text)),
             content: Text(
               '"$name" was encrypted into the vault. Delete the original plaintext copy?',
-              style:
-                  TextStyle(color: context.ac.textSecondary, fontSize: 13),
+              style: TextStyle(color: context.ac.textSecondary, fontSize: 13),
             ),
             actions: [
               TextButton(
@@ -1101,8 +1040,7 @@ class _VaultContentScreenState extends State<VaultContentScreen>
               TextButton(
                 onPressed: () => Navigator.pop(ctx, true),
                 child: const Text('DELETE',
-                    style:
-                        TextStyle(color: Color.fromARGB(255, 255, 50, 50))),
+                    style: TextStyle(color: Color.fromARGB(255, 255, 50, 50))),
               ),
             ],
           ),
@@ -1110,15 +1048,11 @@ class _VaultContentScreenState extends State<VaultContentScreen>
         if (shouldDelete == true) {
           try {
             await File(sourcePath).delete();
-          } catch (_) {
-            // Best-effort — the file is safely in the vault either way.
-          }
+          } catch (_) {}
         }
       }
       if (mounted && looseNames.isNotEmpty) await _loadFiles();
-    } catch (_) {
-      // Non-critical — don't block the vault UI if the scan itself fails.
-    }
+    } catch (_) {}
   }
 
   Future<void> _loadFiles() async {
@@ -1127,8 +1061,7 @@ class _VaultContentScreenState extends State<VaultContentScreen>
       _error = null;
     });
     try {
-      final files =
-          await vaultListFiles(handle: widget.vaultHandle);
+      final files = await vaultListFiles(handle: widget.vaultHandle);
       if (mounted) {
         setState(() {
           _files = files;
@@ -1148,8 +1081,7 @@ class _VaultContentScreenState extends State<VaultContentScreen>
   Future<void> _addFile() async {
     _isPickingFile = true;
     try {
-      final result = await FilePicker.pickFiles(
-          allowMultiple: false);
+      final result = await FilePicker.pickFiles(allowMultiple: false);
       if (result == null || result.files.isEmpty) return;
       final file = result.files.first;
       if (file.path == null) return;
@@ -1161,16 +1093,12 @@ class _VaultContentScreenState extends State<VaultContentScreen>
         originalName: file.name,
       );
 
-      // Delete the temporary copy that FilePicker placed in the app cache.
-      // Without this, the cache grows by the file size on every import.
       try {
         final tempFile = File(file.path!);
         if (await tempFile.exists()) {
           await tempFile.delete();
         }
-      } catch (_) {
-        // Deletion failure is non-fatal — the vault already has the file.
-      }
+      } catch (_) {}
 
       await _loadFiles();
     } catch (e) {
@@ -1192,14 +1120,11 @@ class _VaultContentScreenState extends State<VaultContentScreen>
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: context.ac.card,
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16)),
-        title: Text('Delete file?',
-            style: TextStyle(color: context.ac.text)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text('Delete file?', style: TextStyle(color: context.ac.text)),
         content: Text(
           'Permanently delete "${entry.originalName}" from the vault?\nThis cannot be undone.',
-          style: TextStyle(
-              color: context.ac.textSecondary, fontSize: 13),
+          style: TextStyle(color: context.ac.textSecondary, fontSize: 13),
         ),
         actions: [
           TextButton(
@@ -1218,8 +1143,7 @@ class _VaultContentScreenState extends State<VaultContentScreen>
     try {
       setState(() => _loading = true);
       await vaultDeleteFile(
-          handle: widget.vaultHandle,
-          obfuscatedName: entry.obfuscatedName);
+          handle: widget.vaultHandle, obfuscatedName: entry.obfuscatedName);
       await _loadFiles();
     } catch (e) {
       if (mounted) {
@@ -1233,7 +1157,341 @@ class _VaultContentScreenState extends State<VaultContentScreen>
     }
   }
 
+  Future<void> _extractFile(VaultFileEntry entry) async {
+    _isPickingFile = true;
+    final String? destDir;
+    try {
+      destDir = await FilePicker.getDirectoryPath(
+        dialogTitle: 'Choose destination folder',
+      );
+    } finally {
+      _isPickingFile = false;
+    }
+    if (destDir == null || !mounted) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: context.ac.card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text('Extract file?', style: TextStyle(color: context.ac.text)),
+        content: Text(
+          'Extract "${entry.originalName}" to:\n$destDir',
+          style: TextStyle(color: context.ac.textSecondary, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('CANCEL'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('EXTRACT'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      setState(() => _loading = true);
+      final destPath =
+          '$destDir${Platform.pathSeparator}${entry.originalName}';
+      await vaultExtractFileToPath(
+        handle: widget.vaultHandle,
+        obfuscatedName: entry.obfuscatedName,
+        destPath: destPath,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text('Extracted "${entry.originalName}" to $destDir')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to extract: $e'),
+            backgroundColor: const Color.fromARGB(255, 252, 43, 43),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _extractSelected() async {
+    final targets =
+        _files.where((f) => _selected.contains(f.obfuscatedName)).toList();
+    if (targets.isEmpty) return;
+
+    _isPickingFile = true;
+    final String? destDir;
+    try {
+      destDir = await FilePicker.getDirectoryPath(
+        dialogTitle: 'Choose destination folder',
+      );
+    } finally {
+      _isPickingFile = false;
+    }
+    if (destDir == null || !mounted) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: context.ac.card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+            'Extract ${targets.length} file${targets.length != 1 ? 's' : ''}?',
+            style: TextStyle(color: context.ac.text)),
+        content: Text(
+          'Extract ${targets.length} selected file${targets.length != 1 ? 's' : ''} to:\n$destDir',
+          style: TextStyle(color: context.ac.textSecondary, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('CANCEL'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('EXTRACT'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _loading = true);
+    int failed = 0;
+    for (final entry in targets) {
+      try {
+        final destPath =
+            '$destDir${Platform.pathSeparator}${entry.originalName}';
+        await vaultExtractFileToPath(
+          handle: widget.vaultHandle,
+          obfuscatedName: entry.obfuscatedName,
+          destPath: destPath,
+        );
+      } catch (_) {
+        failed++;
+      }
+    }
+    _exitSelectMode();
+    if (mounted) {
+      setState(() => _loading = false);
+      final ok = targets.length - failed;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(failed == 0
+            ? 'Extracted $ok file${ok != 1 ? 's' : ''} to $destDir'
+            : 'Extracted $ok file${ok != 1 ? 's' : ''}; $failed failed'),
+        backgroundColor:
+            failed > 0 ? const Color.fromARGB(255, 252, 43, 43) : null,
+      ));
+    }
+  }
+
+  Future<void> _extractAll() async {
+    if (_files.isEmpty) return;
+
+    _isPickingFile = true;
+    final String? destDir;
+    try {
+      destDir = await FilePicker.getDirectoryPath(
+        dialogTitle: 'Choose destination folder',
+      );
+    } finally {
+      _isPickingFile = false;
+    }
+    if (destDir == null || !mounted) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: context.ac.card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text('Extract entire vault?',
+            style: TextStyle(color: context.ac.text)),
+        content: Text(
+          'Decrypt and extract all ${_files.length} file${_files.length != 1 ? 's' : ''} to:\n$destDir\n\nFiles will be written as plain, unencrypted copies.',
+          style: TextStyle(color: context.ac.textSecondary, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('CANCEL'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('EXTRACT ALL'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _loading = true);
+    int failed = 0;
+    for (final entry in _files) {
+      try {
+        final destPath =
+            '$destDir${Platform.pathSeparator}${entry.originalName}';
+        await vaultExtractFileToPath(
+          handle: widget.vaultHandle,
+          obfuscatedName: entry.obfuscatedName,
+          destPath: destPath,
+        );
+      } catch (_) {
+        failed++;
+      }
+    }
+    if (mounted) {
+      setState(() => _loading = false);
+      final ok = _files.length - failed;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(failed == 0
+            ? 'Extracted all $ok file${ok != 1 ? 's' : ''} to $destDir'
+            : 'Extracted $ok file${ok != 1 ? 's' : ''}; $failed failed'),
+        backgroundColor:
+            failed > 0 ? const Color.fromARGB(255, 252, 43, 43) : null,
+      ));
+    }
+  }
+
+  Future<void> _deleteSelected() async {
+    final targets =
+        _files.where((f) => _selected.contains(f.obfuscatedName)).toList();
+    if (targets.isEmpty) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: context.ac.card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+            'Delete ${targets.length} file${targets.length != 1 ? 's' : ''}?',
+            style: TextStyle(color: context.ac.text)),
+        content: Text(
+          'Permanently delete ${targets.length} selected file${targets.length != 1 ? 's' : ''} from the vault? This cannot be undone.',
+          style: TextStyle(color: context.ac.textSecondary, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('CANCEL'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('DELETE',
+                style: TextStyle(color: Color.fromARGB(255, 255, 50, 50))),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _loading = true);
+    for (final entry in targets) {
+      try {
+        await vaultDeleteFile(
+          handle: widget.vaultHandle,
+          obfuscatedName: entry.obfuscatedName,
+        );
+      } catch (_) {}
+    }
+    _exitSelectMode();
+    await _loadFiles();
+  }
+
+  Future<void> _renameFile(VaultFileEntry entry) async {
+    final ctrl = TextEditingController(text: entry.originalName);
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: context.ac.card,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text('Rename file', style: TextStyle(color: context.ac.text)),
+          content: TextField(
+            controller: ctrl,
+            autofocus: true,
+            decoration: InputDecoration(
+              labelText: 'New name',
+              prefixIcon: Icon(Icons.edit_rounded,
+                  color: Theme.of(context).colorScheme.primary, size: 20),
+            ),
+            onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, null),
+              child: const Text('CANCEL'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+              child: const Text('RENAME'),
+            ),
+          ],
+        ),
+      ),
+    );
+    ctrl.dispose();
+    if (newName == null ||
+        newName.isEmpty ||
+        newName == entry.originalName ||
+        !mounted) {return;}
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: context.ac.card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title:
+            Text('Confirm rename', style: TextStyle(color: context.ac.text)),
+        content: Text(
+          'Rename "${entry.originalName}" to "$newName"?',
+          style: TextStyle(color: context.ac.textSecondary, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('CANCEL'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('RENAME'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      setState(() => _loading = true);
+      await vaultRenameFile(
+        handle: widget.vaultHandle,
+        obfuscatedName: entry.obfuscatedName,
+        newOriginalName: newName,
+      );
+      await _loadFiles();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to rename: $e'),
+            backgroundColor: const Color.fromARGB(255, 252, 43, 43),
+          ),
+        );
+        setState(() => _loading = false);
+      }
+    }
+  }
+
   Future<void> _lockAndExit() async {
+    await VaultMediaRegistry.onVaultLocked(widget.vaultHandle);
     await vaultLock(handle: widget.vaultHandle);
     if (mounted) {
       Navigator.of(context).popUntil((r) => r.isFirst);
@@ -1269,53 +1527,91 @@ class _VaultContentScreenState extends State<VaultContentScreen>
     return Scaffold(
       appBar: AppBar(
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_forward_ios_rounded,
-              size: 18),
-          onPressed: () => Navigator.push(context, _slideRoute(VaultNavigationDrawer(vaultName: widget.vaultName, onSettings: () {
-            Navigator.pop(context);
-            Navigator.push(
-                context, _slideRoute(SettingsScreen(directoryPath: widget.directoryPath)));
-          },),),)
-        ),
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              widget.vaultName.toUpperCase(),
-              style: const TextStyle(
-                  fontSize: 14,
-                  letterSpacing: 2,
-                  fontWeight: FontWeight.bold),
-            ),
-            Text(
-              '${_files.length} file${_files.length != 1 ? 's' : ''}',
-              style: TextStyle(
-                  fontSize: 11, color: primary),
-            ),
-          ],
-        ),
-        actions: [
-          IconButton(
-            tooltip: 'Lock vault',
-            icon: Icon(Icons.lock_rounded,
-                color: primary),
-            onPressed: _lockAndExit,
-          ),
-          IconButton(
-            tooltip: 'Refresh',
-            icon: Icon(Icons.refresh_rounded,
-                color: context.ac.textSecondary),
-            onPressed: _loadFiles,
-          ),
-        ],
+        leading: _selectMode
+            ? IconButton(
+                icon: const Icon(Icons.close_rounded),
+                onPressed: _exitSelectMode,
+              )
+            : Builder(
+                builder: (ctx) => IconButton(
+                  icon: const Icon(Icons.menu_rounded, size: 22),
+                  onPressed: () => Scaffold.of(ctx).openDrawer(),
+                ),
+              ),
+        title: _selectMode
+            ? Text(
+                '${_selected.length} selected',
+                style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1),
+              )
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.vaultName.toUpperCase(),
+                    style: const TextStyle(
+                        fontSize: 14,
+                        letterSpacing: 2,
+                        fontWeight: FontWeight.bold),
+                  ),
+                  Text(
+                    '${_files.length} file${_files.length != 1 ? 's' : ''}',
+                    style: TextStyle(fontSize: 11, color: primary),
+                  ),
+                ],
+              ),
+        actions: _selectMode
+            ? [
+                IconButton(
+                  tooltip: 'Select all',
+                  icon: Icon(
+                    _selected.length == _files.length
+                        ? Icons.deselect_rounded
+                        : Icons.select_all_rounded,
+                  ),
+                  onPressed: _selectAll,
+                ),
+                IconButton(
+                  tooltip: 'Extract selected',
+                  icon: const Icon(Icons.download_rounded),
+                  onPressed: _extractSelected,
+                ),
+                IconButton(
+                  tooltip: 'Delete selected',
+                  icon: const Icon(Icons.delete_rounded,
+                      color: Color(0xFFFF5252)),
+                  onPressed: _deleteSelected,
+                ),
+              ]
+            : [
+                IconButton(
+                  tooltip: 'Extract all',
+                  icon: const Icon(Icons.download_for_offline_rounded),
+                  onPressed: _extractAll,
+                ),
+                IconButton(
+                  tooltip: 'Refresh',
+                  icon: Icon(Icons.refresh_rounded,
+                      color: context.ac.textSecondary),
+                  onPressed: _loadFiles,
+                ),
+                IconButton(
+                  tooltip: 'Lock vault',
+                  icon: Icon(Icons.lock_rounded, color: primary),
+                  onPressed: _lockAndExit,
+                ),
+              ],
       ),
       drawer: VaultNavigationDrawer(
         vaultName: widget.vaultName,
         onSettings: () {
           Navigator.pop(context);
           Navigator.push(
-              context, _slideRoute(SettingsScreen(directoryPath: widget.directoryPath)));
+              context,
+              _slideRoute(
+                  SettingsScreen(directoryPath: widget.directoryPath)));
         },
       ),
       body: _buildBody(),
@@ -1325,8 +1621,7 @@ class _VaultContentScreenState extends State<VaultContentScreen>
         foregroundColor: Theme.of(context).scaffoldBackgroundColor,
         icon: const Icon(Icons.add_rounded),
         label: const Text('ADD FILE',
-            style: TextStyle(
-                fontWeight: FontWeight.bold, letterSpacing: 1)),
+            style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1)),
       ),
     );
   }
@@ -1334,9 +1629,7 @@ class _VaultContentScreenState extends State<VaultContentScreen>
   Widget _buildBody() {
     final primary = Theme.of(context).colorScheme.primary;
     if (_loading) {
-      return Center(
-          child: CircularProgressIndicator(
-              color: primary));
+      return Center(child: CircularProgressIndicator(color: primary));
     }
     if (_error != null) {
       return Center(
@@ -1347,13 +1640,11 @@ class _VaultContentScreenState extends State<VaultContentScreen>
                 color: Color(0xFFFF5252), size: 48),
             const SizedBox(height: 12),
             Text(_error!,
-                style:
-                    TextStyle(color: context.ac.textSecondary),
+                style: TextStyle(color: context.ac.textSecondary),
                 textAlign: TextAlign.center),
             const SizedBox(height: 16),
             OutlinedButton(
-                onPressed: _loadFiles,
-                child: const Text('RETRY')),
+                onPressed: _loadFiles, child: const Text('RETRY')),
           ],
         ),
       );
@@ -1364,17 +1655,14 @@ class _VaultContentScreenState extends State<VaultContentScreen>
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.shield_rounded,
-                size: 64,
-                color: primary.withValues(alpha: 0.3)),
+                size: 64, color: primary.withValues(alpha: 0.3)),
             const SizedBox(height: 16),
             Text('Vault is empty',
-                style: TextStyle(
-                    color: context.ac.textSecondary, fontSize: 16)),
+                style:
+                    TextStyle(color: context.ac.textSecondary, fontSize: 16)),
             const SizedBox(height: 8),
-            Text(
-                'Tap + ADD FILE to encrypt your first file',
-                style: TextStyle(
-                    color: context.ac.textMuted, fontSize: 13)),
+            Text('Tap + ADD FILE to encrypt your first file',
+                style: TextStyle(color: context.ac.textMuted, fontSize: 13)),
           ],
         ),
       );
@@ -1386,37 +1674,45 @@ class _VaultContentScreenState extends State<VaultContentScreen>
           Divider(color: context.ac.divider, height: 1),
       itemBuilder: (ctx, i) {
         final entry = _files[i];
+        final isSelected = _selected.contains(entry.obfuscatedName);
+
         return Dismissible(
           key: Key(entry.obfuscatedName),
           direction: DismissDirection.endToStart,
           confirmDismiss: (_) async {
             await _deleteFile(entry);
-            return false; // deletion handled manually
+            return false;
           },
           background: Container(
             color: const Color(0xFFFF5252).withValues(alpha: 0.15),
             alignment: Alignment.centerRight,
             padding: const EdgeInsets.only(right: 20),
-            child: const Icon(Icons.delete_rounded,
-                color: Color(0xFFFF5252)),
+            child: const Icon(Icons.delete_rounded, color: Color(0xFFFF5252)),
           ),
           child: ListTile(
-            contentPadding: const EdgeInsets.symmetric(
-                horizontal: 4, vertical: 6),
-            leading: Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: primary.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(_iconForFile(entry.originalName),
-                  color: primary, size: 22),
-            ),
+            selected: isSelected,
+            selectedTileColor: primary.withValues(alpha: 0.1),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            leading: _selectMode
+                ? Checkbox(
+                    value: isSelected,
+                    onChanged: (_) => _toggleSelect(entry.obfuscatedName),
+                    activeColor: primary,
+                  )
+                : Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: primary.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(_iconForFile(entry.originalName),
+                        color: primary, size: 22),
+                  ),
             title: Text(
               entry.originalName,
-              style: TextStyle(
-                  color: context.ac.text, fontSize: 14),
+              style: TextStyle(color: context.ac.text, fontSize: 14),
               overflow: TextOverflow.ellipsis,
             ),
             subtitle: Text(
@@ -1427,10 +1723,90 @@ class _VaultContentScreenState extends State<VaultContentScreen>
                   fontFamily: 'monospace'),
               overflow: TextOverflow.ellipsis,
             ),
-            trailing: Icon(Icons.chevron_right_rounded,
-                color: context.ac.textMuted),
+            trailing: _selectMode
+                ? null
+                : PopupMenuButton<String>(
+                    icon: Icon(Icons.more_vert_rounded,
+                        color: context.ac.textMuted, size: 20),
+                    onSelected: (val) {
+                      switch (val) {
+                        case 'extract':
+                          _extractFile(entry);
+                          break;
+                        case 'rename':
+                          _renameFile(entry);
+                          break;
+                        case 'delete':
+                          _deleteFile(entry);
+                          break;
+                      }
+                    },
+                    itemBuilder: (ctx) => [
+                      PopupMenuItem(
+                        value: 'extract',
+                        child: Row(
+                          children: [
+                            Icon(Icons.download_rounded,
+                                size: 18, color: primary),
+                            const SizedBox(width: 8),
+                            const Text('Extract'),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'rename',
+                        child: Row(
+                          children: [
+                            Icon(Icons.edit_rounded,
+                                size: 18, color: primary),
+                            const SizedBox(width: 8),
+                            const Text('Rename'),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: Row(
+                          children: [
+                            Icon(Icons.delete_rounded,
+                                size: 18, color: Color(0xFFFF5252)),
+                            SizedBox(width: 8),
+                            Text('Delete',
+                                style: TextStyle(color: Color(0xFFFF5252))),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+            onLongPress: () {
+              if (!_selectMode) {
+                _enterSelectMode(entry.obfuscatedName);
+              }
+            },
             onTap: () {
-              // TODO: show file action sheet (extract / preview)
+              if (_selectMode) {
+                _toggleSelect(entry.obfuscatedName);
+                return;
+              }
+
+              final page = switch (vaultMediaKind(entry.originalName)) {
+                VaultMediaKind.image =>
+                  VaultImageViewer(handle: widget.vaultHandle, entry: entry),
+                VaultMediaKind.video =>
+                  VaultVideoViewer(handle: widget.vaultHandle, entry: entry),
+                _ => null,
+              };
+              if (page != null) {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => page),
+                );
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                      content: Text(
+                          'No in-app viewer for this file type. Please export to view.')),
+                );
+              }
             },
           ),
         );
@@ -1448,9 +1824,7 @@ class VaultNavigationDrawer extends StatelessWidget {
   final VoidCallback onSettings;
 
   const VaultNavigationDrawer(
-      {super.key,
-      required this.vaultName,
-      required this.onSettings});
+      {super.key, required this.vaultName, required this.onSettings});
 
   @override
   Widget build(BuildContext context) {
@@ -1463,15 +1837,12 @@ class VaultNavigationDrawer extends StatelessWidget {
               width: double.infinity,
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
-                border: Border(
-                    bottom:
-                        BorderSide(color: context.ac.divider)),
+                border: Border(bottom: BorderSide(color: context.ac.divider)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.lock_rounded,
-                      color: primary, size: 28),
+                  Icon(Icons.lock_rounded, color: primary, size: 28),
                   const SizedBox(height: 12),
                   Text(
                     vaultName,
@@ -1483,9 +1854,7 @@ class VaultNavigationDrawer extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text('Active vault',
-                      style: TextStyle(
-                          fontSize: 12,
-                          color: primary)),
+                      style: TextStyle(fontSize: 12, color: primary)),
                 ],
               ),
             ),
@@ -1507,22 +1876,13 @@ class VaultNavigationDrawer extends StatelessWidget {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THEME SYSTEM
-//   • AppThemeMode      – every selectable theme (+ "system")
-//   • _ThemePalette     – all colours of one theme (dark OR light)
-//   • AppColors         – ThemeExtension so widgets read colours via
-//                         `context.ac.*` instead of hardcoded hex values
-//   • AppThemes         – builds ThemeData (+ OLED variants) from palettes
-//   • ThemeNotifier / OledNotifier – persisted choices (loaded synchronously,
-//                         so there is no flash of the default theme at launch)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Set in main() with the already-loaded SharedPreferences instance.
 final sharedPreferencesProvider = Provider<SharedPreferences>(
   (ref) => throw UnimplementedError(
       'sharedPreferencesProvider must be overridden in main()'),
 );
 
-// NOTE: enum *names* are persisted in SharedPreferences – never rename them.
 enum AppThemeMode {
   xenonyptDark,
   amberLight,
@@ -1538,7 +1898,6 @@ enum AppThemeMode {
 final currentThemeProvider =
     NotifierProvider<ThemeNotifier, AppThemeMode>(ThemeNotifier.new);
 
-/// Semantic colours that Material's ColorScheme has no slot for.
 @immutable
 class AppColors extends ThemeExtension<AppColors> {
   const AppColors({
@@ -1550,12 +1909,12 @@ class AppColors extends ThemeExtension<AppColors> {
     required this.card,
   });
 
-  final Color text; // primary text / titles
-  final Color textSecondary; // subtitles, descriptions
-  final Color textMuted; // hints, disabled, tertiary
-  final Color border; // outlines, sheet handles, dialog borders
-  final Color divider; // dividers, unfilled bars
-  final Color card; // dialogs / raised containers
+  final Color text;
+  final Color textSecondary;
+  final Color textMuted;
+  final Color border;
+  final Color divider;
+  final Color card;
 
   @override
   AppColors copyWith({
@@ -1625,12 +1984,10 @@ class _ThemePalette {
     this.card = const Color(0xFF0E1318),
   });
 
-  /// Text/icon colour drawn on top of [primary] (buttons, FAB…).
   Color get onPrimary =>
       onPrimaryOverride ??
       (brightness == Brightness.dark ? background : Colors.white);
 
-  /// Same theme with pure-black backgrounds (OLED). Dark themes only.
   _ThemePalette toOled() => _ThemePalette(
         brightness: brightness,
         primary: primary,
@@ -1650,7 +2007,6 @@ class _ThemePalette {
 
 class AppThemes {
   static const Map<AppThemeMode, _ThemePalette> _palettes = {
-    // ── Xenonypt ──
     AppThemeMode.xenonyptDark: _ThemePalette(
       primary: Color.fromARGB(255, 28, 183, 255),
       secondary: Color(0xFF00E5CC),
@@ -1677,7 +2033,6 @@ class AppThemes {
       divider: Color(0xFFDCE6EF),
       card: Color(0xFFFFFFFF),
     ),
-    // ── Amber ──
     AppThemeMode.amberLight: _ThemePalette(
       brightness: Brightness.light,
       primary: Color(0xFFC77800),
@@ -1698,7 +2053,6 @@ class AppThemes {
       background: Color.fromARGB(255, 15, 10, 5),
       surface: Color(0xFF090601),
     ),
-    // ── Purple ──
     AppThemeMode.purpleLight: _ThemePalette(
       brightness: Brightness.light,
       primary: Color(0xFF7B1FA2),
@@ -1719,7 +2073,6 @@ class AppThemes {
       background: Color.fromARGB(255, 10, 6, 18),
       surface: Color(0xFF060410),
     ),
-    // ── Gold ──
     AppThemeMode.darkGold: _ThemePalette(
       primary: Color(0xFFFFD54F),
       secondary: Color(0xFFFFEB3B),
@@ -1728,20 +2081,16 @@ class AppThemes {
     ),
   };
 
-  /// Regular themes (every mode except `system`).
   static final Map<AppThemeMode, ThemeData> themes = {
     for (final e in _palettes.entries) e.key: _buildTheme(e.value),
   };
 
-  /// Pure-black variants of the dark themes.
   static final Map<AppThemeMode, ThemeData> _oledThemes = {
     for (final e in _palettes.entries)
       if (e.value.brightness == Brightness.dark)
         e.key: _buildTheme(e.value.toOled()),
   };
 
-  /// Resolves a mode to ThemeData. [mode] must not be `system`
-  /// (XenonyptApp handles that one via MaterialApp.themeMode).
   static ThemeData themeFor(AppThemeMode mode, {bool oled = false}) {
     assert(mode != AppThemeMode.system);
     if (oled) {
@@ -1751,7 +2100,6 @@ class AppThemes {
     return themes[mode]!;
   }
 
-  /// Order shown in the theme picker.
   static const List<AppThemeMode> pickerOrder = [
     AppThemeMode.system,
     AppThemeMode.xenonyptDark,
@@ -1764,14 +2112,11 @@ class AppThemes {
     AppThemeMode.darkGold,
   ];
 
-  /// Accent colour for the picker swatch (null for `system`).
   static Color? swatch(AppThemeMode mode) => _palettes[mode]?.primary;
 
-  /// null for `system`.
   static Brightness? brightnessOf(AppThemeMode mode) =>
       _palettes[mode]?.brightness;
 
-  /// The dark/light sibling used by the "Dark mode" switch.
   static AppThemeMode counterpart(AppThemeMode mode) {
     switch (mode) {
       case AppThemeMode.xenonyptDark:
@@ -1871,7 +2216,6 @@ class AppThemes {
         scrolledUnderElevation: 0,
         surfaceTintColor: Colors.transparent,
         foregroundColor: p.text,
-        // Status-bar icons must contrast with the app bar in light themes.
         systemOverlayStyle:
             (isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark)
                 .copyWith(statusBarColor: Colors.transparent),
@@ -1990,8 +2334,6 @@ class OledNotifier extends Notifier<bool> {
   }
 }
 
-
-
 // ─────────────────────────────────────────────────────────────────────────────
 // SETTINGS SCREEN
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2020,8 +2362,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     try {
       final response = await BiometricStorage().canAuthenticate();
       if (mounted) {
-        setState(() => _isBiometricSupported =
-            response == CanAuthenticateResponse.success);
+        setState(() =>
+            _isBiometricSupported = response == CanAuthenticateResponse.success);
       }
     } catch (_) {
       if (mounted) setState(() => _isBiometricSupported = false);
@@ -2039,28 +2381,26 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Future<void> _handleBiometricToggle(bool val) async {
     if (val) {
-      // Biometrikanı aktivləşdirmək üçün şifrə tələb olunur
       final password = await _showPasswordPromptDialog();
       if (password == null || password.isEmpty) return;
 
       setState(() => _isLoading = true);
       try {
-        // Şifrənin düzgünlüyünü yoxlamaq üçün vault-u açmağa cəhd edirik
         final handle = await vaultUnlock(
             vaultDir: widget.directoryPath, password: password);
         await vaultLock(handle: handle);
 
-        // Uğurludursa, biometrik saxlanca yazırıq
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool(_bioEnabledKey(widget.directoryPath), true);
-        
+
         final storage = await _bioStorage(widget.directoryPath);
         await storage.write(password);
 
         if (mounted) {
           setState(() => _enableBiometric = true);
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Biometric login enabled successfully')),
+            const SnackBar(
+                content: Text('Biometric login enabled successfully')),
           );
         }
       } catch (e) {
@@ -2076,13 +2416,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         if (mounted) setState(() => _isLoading = false);
       }
     } else {
-      // Biometrikanı söndürürük
       setState(() => _isLoading = true);
       try {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool(_bioEnabledKey(widget.directoryPath), false);
-        
-        // Saxlanılan biometrik məlumatı təmizləyirik
+
         final storage = await _bioStorage(widget.directoryPath);
         await storage.delete();
 
@@ -2117,7 +2455,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       builder: (ctx) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           backgroundColor: context.ac.card,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: Text('Confirm Password',
               style: TextStyle(color: context.ac.text)),
           content: Column(
@@ -2125,7 +2464,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             children: [
               Text(
                 'Enter your vault password to enable biometric login.',
-                style: TextStyle(color: context.ac.textSecondary, fontSize: 13),
+                style:
+                    TextStyle(color: context.ac.textSecondary, fontSize: 13),
               ),
               const SizedBox(height: 16),
               TextField(
@@ -2134,9 +2474,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 autofocus: true,
                 decoration: InputDecoration(
                   labelText: 'Password',
-                  prefixIcon: Icon(Icons.lock_rounded, color: Theme.of(context).colorScheme.primary),
+                  prefixIcon: Icon(Icons.lock_rounded,
+                      color: Theme.of(context).colorScheme.primary),
                   suffixIcon: IconButton(
-                    icon: Icon(obscure ? Icons.visibility_off : Icons.visibility,
+                    icon: Icon(
+                        obscure ? Icons.visibility_off : Icons.visibility,
                         color: Theme.of(context).colorScheme.primary),
                     onPressed: () => setDialogState(() => obscure = !obscure),
                   ),
@@ -2168,9 +2510,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         elevation: 0,
         title: const Text('SETTINGS',
             style: TextStyle(
-                fontSize: 14,
-                letterSpacing: 3,
-                fontWeight: FontWeight.bold)),
+                fontSize: 14, letterSpacing: 3, fontWeight: FontWeight.bold)),
         centerTitle: true,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
@@ -2184,9 +2524,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 const _SettingsHeader(title: 'APPEARANCE'),
                 ListTile(
                   leading: Icon(Icons.palette_rounded, color: primary),
-                  title: Text('Theme', style: TextStyle(color: context.ac.text)),
-                  subtitle: Text(AppThemes.label(ref.watch(currentThemeProvider)),
-                      style: TextStyle(color: context.ac.textSecondary, fontSize: 12)),
+                  title:
+                      Text('Theme', style: TextStyle(color: context.ac.text)),
+                  subtitle: Text(
+                      AppThemes.label(ref.watch(currentThemeProvider)),
+                      style: TextStyle(
+                          color: context.ac.textSecondary, fontSize: 12)),
                   trailing: Icon(Icons.chevron_right_rounded,
                       color: context.ac.textSecondary),
                   onTap: _pickTheme,
@@ -2210,8 +2553,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   },
                 ),
                 SwitchListTile(
-                  secondary:
-                      Icon(Icons.brightness_1_rounded, color: primary),
+                  secondary: Icon(Icons.brightness_1_rounded, color: primary),
                   title: Text('True dark / OLED',
                       style: TextStyle(color: context.ac.text)),
                   subtitle: Text(
@@ -2228,23 +2570,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
                 Divider(color: context.ac.divider),
                 const _SettingsHeader(title: 'SECURITY'),
-                _buildTile(Icons.enhanced_encryption_rounded,
-                    'Encryption', 'AES-256-GCM + Argon2id'),
+                _buildTile(Icons.enhanced_encryption_rounded, 'Encryption',
+                    'AES-256-GCM + Argon2id'),
                 if (_isBiometricSupported)
                   SwitchListTile(
-                    secondary: Icon(Icons.fingerprint_rounded,
-                        color: primary),
+                    secondary:
+                        Icon(Icons.fingerprint_rounded, color: primary),
                     title: Text('Biometric login',
                         style: TextStyle(color: context.ac.text)),
                     subtitle: Text('Enable or disable for this vault',
-                        style: TextStyle(color: context.ac.textSecondary, fontSize: 12)),
+                        style: TextStyle(
+                            color: context.ac.textSecondary, fontSize: 12)),
                     value: _enableBiometric,
                     onChanged: _handleBiometricToggle,
                   ),
                 Divider(color: context.ac.divider),
                 const _SettingsHeader(title: 'ABOUT'),
                 _buildTile(Icons.language_rounded, 'Language', 'English'),
-                _buildTile(Icons.code_rounded, 'Source code', 'Version: alpha'),
+                _buildTile(
+                    Icons.code_rounded, 'Source code', 'Version: alpha'),
                 _buildTile(Icons.book_rounded, 'Third-party libraries', ''),
                 const SizedBox(height: 8),
                 ListTile(
@@ -2254,7 +2598,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       style: TextStyle(
                           color: Colors.amber, fontWeight: FontWeight.bold)),
                   subtitle: Text('Unlock advanced features',
-                      style: TextStyle(color: context.ac.textSecondary, fontSize: 12)),
+                      style: TextStyle(
+                          color: context.ac.textSecondary, fontSize: 12)),
                   onTap: () {},
                 ),
               ],
@@ -2330,7 +2675,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 }
 
-
 // ─────────────────────────────────────────────────────────────────────────────
 // SHARED WIDGETS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2369,8 +2713,7 @@ class _InfoRow extends StatelessWidget {
         const SizedBox(width: 10),
         Expanded(
           child: Text(label,
-              style: TextStyle(
-                  fontSize: 13, color: context.ac.textSecondary)),
+              style: TextStyle(fontSize: 13, color: context.ac.textSecondary)),
         ),
       ],
     );
@@ -2384,8 +2727,6 @@ class _PasswordStrengthBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const labels = ['', 'Weak', 'Fair', 'Strong', 'Very strong'];
-    // Strength colours are semantic (red -> cyan) and stay theme-independent;
-    // only the unfilled track follows the theme.
     final colors = [
       context.ac.divider,
       const Color(0xFFFF5252),
@@ -2404,9 +2745,7 @@ class _PasswordStrengthBar extends StatelessWidget {
                   height: 4,
                   margin: const EdgeInsets.only(right: 4),
                   decoration: BoxDecoration(
-                    color: i < strength
-                        ? colors[strength]
-                        : context.ac.divider,
+                    color: i < strength ? colors[strength] : context.ac.divider,
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -2439,11 +2778,9 @@ PageRouteBuilder<T> _slideRoute<T>(Widget page) {
   return PageRouteBuilder<T>(
     pageBuilder: (_, __, ___) => page,
     transitionsBuilder: (_, anim, __, child) {
-      final tween = Tween(
-              begin: const Offset(1.0, 0.0), end: Offset.zero)
+      final tween = Tween(begin: const Offset(1.0, 0.0), end: Offset.zero)
           .chain(CurveTween(curve: Curves.easeOutCubic));
-      return SlideTransition(
-          position: anim.drive(tween), child: child);
+      return SlideTransition(position: anim.drive(tween), child: child);
     },
     transitionDuration: const Duration(milliseconds: 320),
   );
@@ -2495,7 +2832,6 @@ class ManageStoragePermissionDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
     return AlertDialog(
-      // background comes from dialogTheme (follows theme + OLED)
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(20),
         side: BorderSide(color: context.ac.border, width: 1.5),

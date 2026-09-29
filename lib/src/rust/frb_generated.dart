@@ -69,7 +69,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 1845787973;
+  int get rustContentHash => -39034434;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -85,6 +85,9 @@ abstract class RustLibApi extends BaseApi {
       {required VaultHandle handle,
       required String sourceFilePath,
       required String originalName});
+
+  Future<List<VaultFileEntry>> crateApiVaultAddFiles(
+      {required VaultHandle handle, required List<VaultAddFileInput> files});
 
   Future<VaultHandle> crateApiVaultCreateNew(
       {required String vaultDir, required String password});
@@ -102,6 +105,12 @@ abstract class RustLibApi extends BaseApi {
       required String obfuscatedName,
       required String destPath});
 
+  Future<void> crateApiVaultExtractFiles(
+      {required VaultHandle handle,
+      required List<VaultExtractFileInput> files});
+
+  Future<void> crateApiVaultInitThreadPool();
+
   Future<bool> crateApiVaultIsUnlocked({required VaultHandle handle});
 
   Future<List<VaultFileEntry>> crateApiVaultListFiles(
@@ -114,6 +123,11 @@ abstract class RustLibApi extends BaseApi {
 
   Future<VaultFileStream> crateApiVaultOpenStream(
       {required VaultHandle handle, required String obfuscatedName});
+
+  Future<void> crateApiVaultRenameFile(
+      {required VaultHandle handle,
+      required String obfuscatedName,
+      required String newOriginalName});
 
   Future<BigInt> crateApiVaultStreamChunkSize(
       {required VaultFileStream stream});
@@ -184,6 +198,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<List<VaultFileEntry>> crateApiVaultAddFiles(
+      {required VaultHandle handle, required List<VaultAddFileInput> files}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
+            handle, serializer);
+        sse_encode_list_vault_add_file_input(files, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 2, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_vault_file_entry,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiVaultAddFilesConstMeta,
+      argValues: [handle, files],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiVaultAddFilesConstMeta => const TaskConstMeta(
+        debugName: "vault_add_files",
+        argNames: ["handle", "files"],
+      );
+
+  @override
   Future<VaultHandle> crateApiVaultCreateNew(
       {required String vaultDir, required String password}) {
     return handler.executeNormal(NormalTask(
@@ -192,7 +233,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(vaultDir, serializer);
         sse_encode_String(password, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 2, port: port_);
+            funcId: 3, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData:
@@ -220,7 +261,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             handle, serializer);
         sse_encode_String(obfuscatedName, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 3, port: port_);
+            funcId: 4, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -244,7 +285,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_String(vaultDir, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 4, port: port_);
+            funcId: 5, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_bool,
@@ -271,7 +312,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             handle, serializer);
         sse_encode_String(obfuscatedName, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 5, port: port_);
+            funcId: 6, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_list_prim_u_8_strict,
@@ -302,7 +343,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(obfuscatedName, serializer);
         sse_encode_String(destPath, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 6, port: port_);
+            funcId: 7, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -321,6 +362,58 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiVaultExtractFiles(
+      {required VaultHandle handle,
+      required List<VaultExtractFileInput> files}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
+            handle, serializer);
+        sse_encode_list_vault_extract_file_input(files, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 8, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiVaultExtractFilesConstMeta,
+      argValues: [handle, files],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiVaultExtractFilesConstMeta => const TaskConstMeta(
+        debugName: "vault_extract_files",
+        argNames: ["handle", "files"],
+      );
+
+  @override
+  Future<void> crateApiVaultInitThreadPool() {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 9, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiVaultInitThreadPoolConstMeta,
+      argValues: [],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiVaultInitThreadPoolConstMeta =>
+      const TaskConstMeta(
+        debugName: "vault_init_thread_pool",
+        argNames: [],
+      );
+
+  @override
   Future<bool> crateApiVaultIsUnlocked({required VaultHandle handle}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
@@ -328,7 +421,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
             handle, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 7, port: port_);
+            funcId: 10, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_bool,
@@ -354,7 +447,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
             handle, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 8, port: port_);
+            funcId: 11, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_list_vault_file_entry,
@@ -380,7 +473,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
             handle, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 9, port: port_);
+            funcId: 12, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_list_String,
@@ -406,7 +499,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
             handle, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 10, port: port_);
+            funcId: 13, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -433,7 +526,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             handle, serializer);
         sse_encode_String(obfuscatedName, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 11, port: port_);
+            funcId: 14, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData:
@@ -452,6 +545,36 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiVaultRenameFile(
+      {required VaultHandle handle,
+      required String obfuscatedName,
+      required String newOriginalName}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultHandle(
+            handle, serializer);
+        sse_encode_String(obfuscatedName, serializer);
+        sse_encode_String(newOriginalName, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 15, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiVaultRenameFileConstMeta,
+      argValues: [handle, obfuscatedName, newOriginalName],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiVaultRenameFileConstMeta => const TaskConstMeta(
+        debugName: "vault_rename_file",
+        argNames: ["handle", "obfuscatedName", "newOriginalName"],
+      );
+
+  @override
   Future<BigInt> crateApiVaultStreamChunkSize(
       {required VaultFileStream stream}) {
     return handler.executeNormal(NormalTask(
@@ -460,7 +583,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultFileStream(
             stream, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 12, port: port_);
+            funcId: 16, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_u_64,
@@ -488,7 +611,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             stream, serializer);
         sse_encode_u_64(chunkIndex, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 13, port: port_);
+            funcId: 17, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_list_prim_u_8_strict,
@@ -515,7 +638,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVaultFileStream(
             stream, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 14, port: port_);
+            funcId: 18, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_u_64,
@@ -542,7 +665,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(vaultDir, serializer);
         sse_encode_String(password, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 15, port: port_);
+            funcId: 19, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData:
@@ -649,6 +772,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<VaultAddFileInput> dco_decode_list_vault_add_file_input(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_vault_add_file_input).toList();
+  }
+
+  @protected
+  List<VaultExtractFileInput> dco_decode_list_vault_extract_file_input(
+      dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(dco_decode_vault_extract_file_input)
+        .toList();
+  }
+
+  @protected
   List<VaultFileEntry> dco_decode_list_vault_file_entry(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_vault_file_entry).toList();
@@ -676,6 +814,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   BigInt dco_decode_usize(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dcoDecodeU64(raw);
+  }
+
+  @protected
+  VaultAddFileInput dco_decode_vault_add_file_input(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return VaultAddFileInput(
+      sourceFilePath: dco_decode_String(arr[0]),
+      originalName: dco_decode_String(arr[1]),
+    );
+  }
+
+  @protected
+  VaultExtractFileInput dco_decode_vault_extract_file_input(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return VaultExtractFileInput(
+      obfuscatedName: dco_decode_String(arr[0]),
+      destPath: dco_decode_String(arr[1]),
+    );
   }
 
   @protected
@@ -777,6 +939,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<VaultAddFileInput> sse_decode_list_vault_add_file_input(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <VaultAddFileInput>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_vault_add_file_input(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<VaultExtractFileInput> sse_decode_list_vault_extract_file_input(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <VaultExtractFileInput>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_vault_extract_file_input(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<VaultFileEntry> sse_decode_list_vault_file_entry(
       SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -810,6 +998,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   BigInt sse_decode_usize(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getBigUint64();
+  }
+
+  @protected
+  VaultAddFileInput sse_decode_vault_add_file_input(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_sourceFilePath = sse_decode_String(deserializer);
+    var var_originalName = sse_decode_String(deserializer);
+    return VaultAddFileInput(
+        sourceFilePath: var_sourceFilePath, originalName: var_originalName);
+  }
+
+  @protected
+  VaultExtractFileInput sse_decode_vault_extract_file_input(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_obfuscatedName = sse_decode_String(deserializer);
+    var var_destPath = sse_decode_String(deserializer);
+    return VaultExtractFileInput(
+        obfuscatedName: var_obfuscatedName, destPath: var_destPath);
   }
 
   @protected
@@ -915,6 +1123,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_vault_add_file_input(
+      List<VaultAddFileInput> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_vault_add_file_input(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_vault_extract_file_input(
+      List<VaultExtractFileInput> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_vault_extract_file_input(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_vault_file_entry(
       List<VaultFileEntry> self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -945,6 +1173,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_usize(BigInt self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putBigUint64(self);
+  }
+
+  @protected
+  void sse_encode_vault_add_file_input(
+      VaultAddFileInput self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.sourceFilePath, serializer);
+    sse_encode_String(self.originalName, serializer);
+  }
+
+  @protected
+  void sse_encode_vault_extract_file_input(
+      VaultExtractFileInput self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.obfuscatedName, serializer);
+    sse_encode_String(self.destPath, serializer);
   }
 
   @protected

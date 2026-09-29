@@ -72,6 +72,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
+  List<VaultAddFileInput> dco_decode_list_vault_add_file_input(dynamic raw);
+
+  @protected
+  List<VaultExtractFileInput> dco_decode_list_vault_extract_file_input(
+      dynamic raw);
+
+  @protected
   List<VaultFileEntry> dco_decode_list_vault_file_entry(dynamic raw);
 
   @protected
@@ -85,6 +92,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BigInt dco_decode_usize(dynamic raw);
+
+  @protected
+  VaultAddFileInput dco_decode_vault_add_file_input(dynamic raw);
+
+  @protected
+  VaultExtractFileInput dco_decode_vault_extract_file_input(dynamic raw);
 
   @protected
   VaultFileEntry dco_decode_vault_file_entry(dynamic raw);
@@ -132,6 +145,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
+  List<VaultAddFileInput> sse_decode_list_vault_add_file_input(
+      SseDeserializer deserializer);
+
+  @protected
+  List<VaultExtractFileInput> sse_decode_list_vault_extract_file_input(
+      SseDeserializer deserializer);
+
+  @protected
   List<VaultFileEntry> sse_decode_list_vault_file_entry(
       SseDeserializer deserializer);
 
@@ -146,6 +167,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BigInt sse_decode_usize(SseDeserializer deserializer);
+
+  @protected
+  VaultAddFileInput sse_decode_vault_add_file_input(
+      SseDeserializer deserializer);
+
+  @protected
+  VaultExtractFileInput sse_decode_vault_extract_file_input(
+      SseDeserializer deserializer);
 
   @protected
   VaultFileEntry sse_decode_vault_file_entry(SseDeserializer deserializer);
@@ -197,6 +226,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       Uint8List self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_vault_add_file_input(
+      List<VaultAddFileInput> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_vault_extract_file_input(
+      List<VaultExtractFileInput> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_vault_file_entry(
       List<VaultFileEntry> self, SseSerializer serializer);
 
@@ -211,6 +248,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_usize(BigInt self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_vault_add_file_input(
+      VaultAddFileInput self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_vault_extract_file_input(
+      VaultExtractFileInput self, SseSerializer serializer);
 
   @protected
   void sse_encode_vault_file_entry(

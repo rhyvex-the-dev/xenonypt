@@ -49,6 +49,7 @@ dependencies:
   shelf: ^1.4.2
   shelf_router: ^1.1.4
   flutter_riverpod: ^3.4.3
+  video_player: ^2.14.0
 dev_dependencies:
   flutter_launcher_icons: ^0.13.1
   flutter_test:

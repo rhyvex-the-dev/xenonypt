@@ -76,6 +76,15 @@ pub fn vault_delete_file(handle: &VaultHandle, obfuscated_name: String) -> Resul
     handle.delete_file(obfuscated_name)
 }
 
+/// Kassadakı faylın görünən adını yeniləyir (yalnız metadata dəyişir, fayl yenidən şifrələnmir).
+pub fn vault_rename_file(
+    handle: &VaultHandle,
+    obfuscated_name: String,
+    new_original_name: String,
+) -> Result<(), String> {
+    handle.rename_file(obfuscated_name, new_original_name)
+}
+
 /// Kassadakı bütün faylların siyahısını qaytarır.
 pub fn vault_list_files(handle: &VaultHandle) -> Result<Vec<VaultFileEntry>, String> {
     handle.list_files()
